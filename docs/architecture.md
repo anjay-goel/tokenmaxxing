@@ -33,7 +33,8 @@ Identity is source-scoped. Timestamps are metadata, never identity.
 | OpenCode | completed part identity, or assistant message fallback | A message fallback exists only without a completed part |
 
 Child Codex and OpenCode activity remains one model call per source identity.
-Root attribution groups the activity without creating another usage event.
+Root session attribution groups the activity without creating another usage
+event, while a private child run retains the physical execution boundary.
 
 ## Observations and events
 
@@ -86,7 +87,10 @@ Pi source token and cost values are authoritative for local reporting.
 
 Completed `step-finish` parts are model calls. An assistant message supplies a
 fallback only when no completed part exists. Session aggregate columns are not
-counted again. Child-session calls attach to the root session for grouping.
+counted again. Child-session calls attach to the root session for grouping and
+to one child run for execution accounting. Normal sync repairs legacy child
+events that have the root session but no child run without changing their event
+identity or token values.
 
 OpenCode reported totals remain reported totals; when absent, a derived total is
 stored separately. Its source cost is labeled as an estimate, including known
@@ -109,6 +113,21 @@ Cost coverage is explicit. A known zero is covered. A missing value is not
 zero, and grouped cost is unavailable unless every event in that group has cost
 coverage.
 
+## Profile aggregation
+
+Profile statistics are derived from one counted-event snapshot. The configured
+window uses half-open local-day boundaries, and the activity calendar always
+contains the 364 local days ending today. Missing-timestamp events contribute
+only to the all-time token total.
+
+An internal execution key groups direct calls by session and genuine child
+calls by run. Only positive-token rows with an execution key count as agents.
+Repeated calls in one execution count once, and each agent's primary model is
+selected from window token totals with an alphabetical tie break. Daily agent
+stacks count distinct day-and-execution pairs using that stable primary model.
+Unidentified usage still contributes to token, model, cost-equivalent, peak,
+and activity totals, but not agent counts or streaks.
+
 ## Privacy boundary
 
 Parsers may inspect private source records, but projections may retain only
@@ -117,5 +136,6 @@ tool content, and arbitrary source strings are rejected or dropped. Workspace
 paths are salted hashes.
 
 The local SQLite database contains stable identifiers required for incremental
-accounting and must not be published. Aggregate JSON export is the publication
-boundary.
+accounting and must not be published. Internal profile execution keys remain in
+repository-only wrappers and never enter general reporting or serialization.
+Aggregate JSON export is the publication boundary.

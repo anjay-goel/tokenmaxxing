@@ -115,6 +115,27 @@ def _non_finish_part(
     )
 
 
+def _event_identity(repository: Repository, event_key: str) -> tuple[int | None, int | None]:
+    row = repository.connection.execute(
+        "SELECT session_id, run_id FROM usage_events WHERE source = 'opencode' "
+        "AND event_key = ?",
+        (event_key,),
+    ).fetchone()
+    assert row is not None
+    return row
+
+
+def _run_for_source_session(repository: Repository, source_session_id: str) -> tuple[int, str | None]:
+    row = repository.connection.execute(
+        "SELECT r.id, r.parent_run_id FROM runs r "
+        "JOIN sessions s ON s.id = r.session_id "
+        "WHERE s.source = 'opencode' AND s.source_session_id = ?",
+        (source_session_id,),
+    ).fetchone()
+    assert row is not None
+    return row
+
+
 def test_completed_steps_are_canonical_usage_not_assistant_or_session_aggregates(
     repository: Repository, tmp_path: Path
 ) -> None:
@@ -369,30 +390,101 @@ def test_deleted_and_reappearing_parts_are_excluded_then_restored(
     assert fallback is not None and fallback.status == "excluded"
 
 
-def test_child_session_steps_are_counted_once_at_the_root_session(
+def test_child_and_nested_session_calls_retain_physical_runs_without_double_counting(
     repository: Repository, tmp_path: Path
 ) -> None:
     path = _source_database(tmp_path)
     with sqlite3.connect(path) as source:
         _session(source, "root")
         _session(source, "child", parent_id="root", input_tokens=999, output_tokens=999)
+        _session(source, "grandchild", parent_id="child")
+        _assistant_message(source, "root-message", "root")
+        _step_finish(source, "root-part", "root-message", "root", reported_total=11)
         _assistant_message(source, "child-message", "child")
-        _step_finish(source, "child-part", "child-message", "child")
+        _step_finish(source, "child-part", "child-message", "child", reported_total=22)
+        _assistant_message(source, "child-fallback", "child")
+        _assistant_message(source, "grandchild-message", "grandchild")
+        _step_finish(
+            source,
+            "grandchild-part",
+            "grandchild-message",
+            "grandchild",
+            reported_total=33,
+        )
 
-    sync_opencode(repository, OpenCodeRoots.from_data_dir(path.parent))
+    first = sync_opencode(repository, OpenCodeRoots.from_data_dir(path.parent))
+    repeated = sync_opencode(repository, OpenCodeRoots.from_data_dir(path.parent))
 
-    event = repository.get_event("opencode:part:child-part")
-    assert event is not None
-    assert repository.event_count("opencode") == 1
-    assert event.session_id == repository.connection.execute(
+    root_database_id = repository.connection.execute(
         "SELECT id FROM sessions WHERE source = 'opencode' AND source_session_id = 'root'"
     ).fetchone()[0]
+    child_run = _run_for_source_session(repository, "child")
+    grandchild_run = _run_for_source_session(repository, "grandchild")
+
+    assert _event_identity(repository, "opencode:part:root-part") == (
+        root_database_id,
+        None,
+    )
+    assert {
+        _event_identity(repository, event_key)
+        for event_key in (
+            "opencode:part:child-part",
+            "opencode:message:child-fallback",
+        )
+    } == {(root_database_id, child_run[0])}
+    assert _event_identity(repository, "opencode:part:grandchild-part") == (
+        root_database_id,
+        grandchild_run[0],
+    )
+    assert child_run[1] == "root"
+    assert grandchild_run[1] == "child"
+    assert repository.event_count("opencode") == 4
+    assert repository.source_total("opencode").tokens.reported_total == 66
+    assert first.events_inserted == 4
+    assert repeated.events_inserted == 0
+    assert repeated.events_updated == 0
+
+
+def test_legacy_child_event_without_run_is_repaired_on_normal_sync(
+    repository: Repository, tmp_path: Path
+) -> None:
+    path = _source_database(tmp_path)
+    with sqlite3.connect(path) as source:
+        _session(source, "root")
+        _session(source, "child", parent_id="root")
+        _assistant_message(source, "child-message", "child")
+        _step_finish(source, "child-part", "child-message", "child", reported_total=77)
+
+    sync_opencode(repository, OpenCodeRoots.from_data_dir(path.parent))
+    event_key = "opencode:part:child-part"
+    before = repository.get_event(event_key)
+    assert before is not None
+    child_run_id = _run_for_source_session(repository, "child")[0]
+    repository.connection.execute(
+        "UPDATE usage_events SET run_id = NULL WHERE source = 'opencode' AND event_key = ?",
+        (event_key,),
+    )
+
+    repaired = sync_opencode(repository, OpenCodeRoots.from_data_dir(path.parent))
+
+    after = repository.get_event(event_key)
+    assert after is not None
+    assert after.event_key == before.event_key
+    assert after.tokens == before.tokens
+    assert after.session_id == before.session_id
+    assert after.run_id == child_run_id
+    assert repository.event_count("opencode") == 1
+    assert repository.source_total("opencode").tokens.reported_total == 77
+    assert repaired.events_inserted == 0
+    assert repaired.events_updated == 1
 
 
 def test_active_wal_rows_are_visible_to_the_read_only_importer(
     repository: Repository, tmp_path: Path
 ) -> None:
-    path = _source_database(tmp_path)
+    data_dir = tmp_path / "OpenCode Data"
+    data_dir.mkdir()
+    path = _source_database(data_dir)
     source = sqlite3.connect(path, isolation_level=None)
     source.execute("PRAGMA journal_mode = WAL")
     _session(source, "session-1")

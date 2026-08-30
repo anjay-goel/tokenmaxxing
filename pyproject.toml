@@ -17,7 +17,11 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "jinja2>=3.1,<4",
+    "pyyaml>=6,<7",
     "rich>=15,<16",
+    "tzdata>=2025.2",
+    "tzlocal>=5,<6",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -31,6 +35,10 @@ classifiers = [
 keywords = ["agent", "claude-code", "codex", "opencode", "pi", "tokens", "usage"]
 
 [project.urls]
+Homepage = "https://github.com/anjay-goel/tokenmaxxing"
+Documentation = "https://github.com/anjay-goel/tokenmaxxing#readme"
+Repository = "https://github.com/anjay-goel/tokenmaxxing"
+Issues = "https://github.com/anjay-goel/tokenmaxxing/issues"
 License = "https://spdx.org/licenses/MIT.html"
 
 [project.scripts]

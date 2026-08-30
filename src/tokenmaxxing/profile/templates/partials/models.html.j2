@@ -1,0 +1,19 @@
+<section class="content-section ranking" aria-labelledby="ranking-title">
+  <div class="section-heading ranking-head">
+    <h2 id="ranking-title">Models</h2>
+    <div class="segmented" role="tablist" aria-label="Rank usage by">
+      <button id="models-tab" type="button" role="tab" aria-selected="true" aria-controls="models-panel" data-tab="models">Models</button>
+      <button id="harnesses-tab" type="button" role="tab" aria-selected="false" aria-controls="harnesses-panel" data-tab="harnesses" tabindex="-1">Harnesses</button>
+    </div>
+  </div>
+  <div id="models-panel" role="tabpanel" aria-labelledby="models-tab" data-panel="models">
+    <ol class="ranking-list">
+      {% for model in stats.models %}<li class="rank-row"><span class="rank-number">{{ "%02d"|format(loop.index) }}</span><span class="rank-name"><span class="model-icon icon-{{ model.icon }}" aria-hidden="true"></span><span>{{ model.name }}</span></span><span class="rank-value">{{ model.tokens|tokens }} tokens</span></li>{% else %}<li class="empty-row">No model activity yet.</li>{% endfor %}
+    </ol>
+  </div>
+  <div id="harnesses-panel" role="tabpanel" aria-labelledby="harnesses-tab" data-panel="harnesses" hidden>
+    <ol class="ranking-list">
+      {% for harness in stats.harnesses %}<li class="rank-row"><span class="rank-number">{{ "%02d"|format(loop.index) }}</span><span class="rank-name"><span class="model-icon icon-{{ harness.icon }}" aria-hidden="true"></span><span>{{ harness.name }}</span></span><span class="rank-value">{{ harness.tokens|tokens }} tokens</span></li>{% else %}<li class="empty-row">No harness activity yet.</li>{% endfor %}
+    </ol>
+  </div>
+</section>

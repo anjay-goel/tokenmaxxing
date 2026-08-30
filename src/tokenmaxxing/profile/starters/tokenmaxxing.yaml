@@ -1,0 +1,26 @@
+# Public profile fields and aggregate display settings.
+version: 1
+profile:
+  name: Your Name
+  role: ""
+  bio: ""
+  links: []
+site:
+  title: My token trail
+  description: Aggregate local AI agent usage.
+  canonical_url: https://example.com/tokens/
+  indexable: false
+  timezone: UTC
+  theme: auto
+  accent: violet
+metrics:
+  window_days: 28
+  show_api_equivalent: true
+  show_agents: true
+  show_peak_usage: true
+  show_longest_streak: true
+  show_models: true
+deploy:
+  command: []
+schedule:
+  time: "09:00"

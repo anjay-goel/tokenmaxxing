@@ -13,7 +13,7 @@ _Period = Literal["7d", "28d", "all"]
 
 @dataclass(frozen=True, slots=True)
 class ReportWindow:
-    period: _Period
+    period: str
     start_ns: int | None
     end_ns: int | None
 
@@ -21,18 +21,28 @@ class ReportWindow:
     def from_period(
         cls, period: _Period, timezone: tzinfo, now: datetime
     ) -> "ReportWindow":
-        if now.tzinfo is None or now.utcoffset() is None:
-            raise ValueError("now must have an explicit timezone")
         if period == "all":
+            if now.tzinfo is None or now.utcoffset() is None:
+                raise ValueError("now must have an explicit timezone")
             return cls(period=period, start_ns=None, end_ns=None)
         day_count = {"7d": 7, "28d": 28}[period]
+        return cls.from_days(day_count, timezone, now)
+
+    @classmethod
+    def from_days(
+        cls, day_count: int, timezone: tzinfo, now: datetime
+    ) -> "ReportWindow":
+        if isinstance(day_count, bool) or not isinstance(day_count, int) or day_count <= 0:
+            raise ValueError("day_count must be a positive integer")
+        if now.tzinfo is None or now.utcoffset() is None:
+            raise ValueError("now must have an explicit timezone")
         today = now.astimezone(timezone).date()
         start = datetime.combine(
             today - timedelta(days=day_count - 1), time.min, tzinfo=timezone
         )
         end = datetime.combine(today + timedelta(days=1), time.min, tzinfo=timezone)
         return cls(
-            period=period,
+            period=f"{day_count}d",
             start_ns=int(start.timestamp()) * 1_000_000_000,
             end_ns=int(end.timestamp()) * 1_000_000_000,
         )

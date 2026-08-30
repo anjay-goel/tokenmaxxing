@@ -24,6 +24,13 @@ def default_paths(
     platform = sys.platform if platform is None else platform
     if configured_home := environ.get("TOKENMAXXING_HOME"):
         data_dir = Path(configured_home)
+    elif platform == "win32":
+        local_app_data = environ.get("LOCALAPPDATA")
+        data_dir = (
+            Path(local_app_data)
+            if local_app_data
+            else home / "AppData" / "Local"
+        ) / "tokenmaxxing"
     elif platform == "darwin":
         data_dir = home / "Library" / "Application Support" / "tokenmaxxing"
     elif configured_xdg_data_home := environ.get("XDG_DATA_HOME"):
@@ -51,7 +58,11 @@ def load_or_create_salt(path: Path) -> bytes:
             os.fsync(salt_file.fileno())
     if len(salt) != 32:
         raise ValueError("salt must contain exactly 32 bytes")
-    os.chmod(path, 0o600)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        if sys.platform != "win32":
+            raise
     return salt
 
 

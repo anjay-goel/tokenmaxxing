@@ -1,4 +1,6 @@
 import os
+import sys
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal
@@ -19,11 +21,18 @@ class SourceRoots:
     opencode_db: Path
 
     @classmethod
-    def defaults(cls, home: Path | None = None) -> "SourceRoots":
+    def defaults(
+        cls,
+        home: Path | None = None,
+        environ: Mapping[str, str] | None = None,
+        platform: str | None = None,
+    ) -> "SourceRoots":
         home = Path.home() if home is None else home
+        environ = os.environ if environ is None else environ
+        platform = sys.platform if platform is None else platform
         opencode_data = (
-            Path(os.environ["XDG_DATA_HOME"]) / "opencode"
-            if os.environ.get("XDG_DATA_HOME")
+            Path(environ["XDG_DATA_HOME"]) / "opencode"
+            if platform != "win32" and environ.get("XDG_DATA_HOME")
             else home / ".local" / "share" / "opencode"
         )
         return cls(

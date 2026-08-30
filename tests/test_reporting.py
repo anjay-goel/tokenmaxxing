@@ -463,6 +463,38 @@ def test_report_windows_filter_on_half_open_local_day_boundaries(
     ]
 
 
+def test_report_window_from_days_supports_arbitrary_local_day_counts() -> None:
+    now = datetime(2026, 11, 2, 12, tzinfo=NEW_YORK)
+
+    window = reporting.ReportWindow.from_days(2, NEW_YORK, now)
+
+    assert window.period == "2d"
+    assert window.includes(
+        _reporting_row(
+            int(datetime(2026, 11, 1, 0, tzinfo=NEW_YORK).timestamp())
+            * 1_000_000_000
+        )
+    )
+    assert window.includes(
+        _reporting_row(
+            int(datetime(2026, 11, 2, 23, 59, 59, tzinfo=NEW_YORK).timestamp())
+            * 1_000_000_000
+        )
+    )
+    assert not window.includes(
+        _reporting_row(
+            int(datetime(2026, 10, 31, 23, 59, 59, tzinfo=NEW_YORK).timestamp())
+            * 1_000_000_000
+        )
+    )
+    assert not window.includes(
+        _reporting_row(
+            int(datetime(2026, 11, 3, 0, tzinfo=NEW_YORK).timestamp())
+            * 1_000_000_000
+        )
+    )
+
+
 def _reporting_row(occurred_at_ns: int) -> ReportingRow:
     return ReportingRow(
         source="claude",

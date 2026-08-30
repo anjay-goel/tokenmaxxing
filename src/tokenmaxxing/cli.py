@@ -5,8 +5,8 @@ import sys
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager, nullcontext
 from dataclasses import asdict
-from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime, timedelta, timezone, tzinfo
+from importlib.metadata import version
 from pathlib import Path
 from threading import Event, Thread
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -14,11 +14,14 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
+import tzlocal
 
 from tokenmaxxing.config import default_paths
 from tokenmaxxing.db import Database
 from tokenmaxxing.models import Source, UsageStat
 from tokenmaxxing.pricing import ApiValueEstimate, estimate_api_value_rows
+from tokenmaxxing.presentation import api_value_text, compact_tokens, compact_usd, usage_quip
+from tokenmaxxing.profile import cli as profile_cli
 from tokenmaxxing.reporting import ReportWindow, export_payload, usage_stats_rows
 from tokenmaxxing.repository import Repository
 from tokenmaxxing.sync import SourceRoots, SourceSyncResult, sync_sources
@@ -85,6 +88,10 @@ def _local_timezone(localtime_path: Path = Path("/etc/localtime")) -> tzinfo:
             pass
     if system_timezone := _timezone_from_localtime(localtime_path):
         return system_timezone
+    try:
+        return tzlocal.get_localzone()
+    except (OSError, ValueError, ZoneInfoNotFoundError):
+        pass
     local = datetime.now().astimezone()
     offset = local.utcoffset() or timedelta()
     return timezone(offset, _offset_name(offset))
@@ -92,6 +99,9 @@ def _local_timezone(localtime_path: Path = Path("/etc/localtime")) -> tzinfo:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="tokenmaxxing")
+    parser.add_argument(
+        "--version", action="version", version=version("tokenmaxxing-history")
+    )
     parser.add_argument("--db", type=Path, default=default_paths().db_path)
     parser.add_argument("--debug", action="store_true")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -133,6 +143,7 @@ def build_parser() -> argparse.ArgumentParser:
     export.add_argument(
         "--timezone", type=_timezone, default=_local_timezone(), help=timezone_help
     )
+    profile_cli.add_profile_parser(commands)
     return parser
 
 
@@ -169,84 +180,22 @@ def _now(timezone: tzinfo) -> datetime:
 
 
 def _compact_tokens(tokens: int) -> str:
-    scales = (
-        (1_000_000_000, "B"),
-        (1_000_000, "M"),
-        (1_000, "K"),
-    )
-    for index, (threshold, suffix) in enumerate(scales):
-        if tokens >= threshold:
-            scaled = f"{tokens / threshold:.1f}"
-            if scaled == "1000.0" and index:
-                threshold, suffix = scales[index - 1]
-                scaled = f"{tokens / threshold:.1f}"
-            scaled = scaled.rstrip("0").rstrip(".")
-            return f"{scaled}{suffix}"
-    return str(tokens)
+    return compact_tokens(tokens)
 
 
 def _compact_usd(cost_nanos: int) -> str:
-    if cost_nanos == 0:
-        return "$0"
-    dollars = Decimal(cost_nanos) / Decimal(1_000_000_000)
-    if dollars < Decimal("0.01"):
-        return "<$0.01"
-    if dollars < 10:
-        value = dollars.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        return f"${format(value, 'f').rstrip('0').rstrip('.')}"
-    if dollars < 100:
-        value = dollars.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
-        return f"${value}"
-    scales = (
-        (Decimal(1_000_000_000), "B"),
-        (Decimal(1_000_000), "M"),
-        (Decimal(1_000), "K"),
-        (Decimal(1), ""),
-    )
-    scale_index = len(scales) - 1
-    threshold, suffix = scales[scale_index]
-    for index, (candidate, candidate_suffix) in enumerate(scales):
-        if dollars >= candidate:
-            scale_index = index
-            threshold = candidate
-            suffix = candidate_suffix
-            break
-    value = (dollars / threshold).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
-    if value == 1000 and scale_index:
-        threshold, suffix = scales[scale_index - 1]
-        value = (dollars / threshold).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
-    compact = format(value, "f").rstrip("0").rstrip(".")
-    return f"${compact}{suffix}"
+    return compact_usd(cost_nanos)
 
 
 def _api_value_copy(api_equivalent: ApiValueEstimate) -> str | None:
-    if (
-        api_equivalent.total_tokens
-        and api_equivalent.priced_tokens * 100 < api_equivalent.total_tokens * 95
-    ):
+    value = api_value_text(api_equivalent)
+    if value is None:
         return None
-    value = _compact_usd(api_equivalent.cost_nanos)
     prefix = "" if value.startswith("<") or api_equivalent.cost_nanos == 0 else "≈"
     return f"API equivalent: {prefix}{value}"
 
-
 def _usage_hint(tokens: int) -> str:
-    if tokens == 0:
-        return "Quiet. Suspiciously human."
-    if tokens < 100_000:
-        return "Just a light snack."
-    if tokens < 1_000_000:
-        return "A tidy little token trail."
-    if tokens < 10_000_000:
-        return "The agents are stretching their legs."
-    if tokens < 100_000_000:
-        return "Your autocomplete has a work ethic."
-    if tokens < 1_000_000_000:
-        return "You may have accidentally hired a small team."
-    if tokens < 10_000_000_000:
-        return "You didn't use AI. You employed a small civilization."
-    return "The tokens have unionized."
-
+    return usage_quip(tokens)
 
 def _stats_title(group_by: str) -> str:
     return {"model": "Models", "harness": "Harnesses", "day": "Days"}[group_by]
@@ -441,9 +390,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _sync(arguments)
         if arguments.command == "stats":
             return _stats(arguments)
-        return _export(arguments)
+        if arguments.command == "export":
+            return _export(arguments)
+        if arguments.command == "profile":
+            return profile_cli.run_profile(arguments)
+        raise ValueError(f"unknown command: {arguments.command}")
     except Exception as error:
         if arguments.debug:
             raise
-        print(f"error: {type(error).__name__}", file=sys.stderr)
+        print(f"error: {error}", file=sys.stderr)
         return 1

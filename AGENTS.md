@@ -13,6 +13,16 @@ personal statistics.
 - `src/tokenmaxxing/pricing.py`: API-equivalent estimation and rate-card validation.
 - `src/tokenmaxxing/data/rate-card.json`: dated public token prices.
 - `src/tokenmaxxing/sync.py`: four-source orchestration.
+- `src/tokenmaxxing/profile/config.py`: strict YAML configuration and discovery.
+- `src/tokenmaxxing/profile/project.py`: project initialization and generated paths.
+- `src/tokenmaxxing/profile/data.py`: privacy-safe profile aggregation.
+- `src/tokenmaxxing/profile/awards.py`: deterministic aggregate award rules.
+- `src/tokenmaxxing/profile/render.py`: Jinja rendering and public payload creation.
+- `src/tokenmaxxing/profile/build.py`: build validation and rollback-safe replacement.
+- `src/tokenmaxxing/profile/deploy.py`: approved argv planning and execution.
+- `src/tokenmaxxing/profile/schedule.py`: owned OS scheduler integrations.
+- `src/tokenmaxxing/profile/cli.py`: profile workflow and terminal output.
+- `src/tokenmaxxing/profile/templates/` and `assets/`: packaged site source.
 - `tests/fixtures/`: minimal source-shaped fixtures without private content.
 - `docs/architecture.md`: identities, data flow, and accounting semantics.
 
@@ -40,6 +50,22 @@ from stored observations. Importer modules own discovery and lifecycle order.
 - Source text, prompts, reasoning, tool content, and raw workspace paths must
   never cross the projection boundary.
 - Check the SQLite database, WAL, and SHM when changing privacy behavior.
+- Profile aggregation must reuse reporting and pricing arithmetic.
+- Internal agent keys may group stored rows but must never enter a public
+  payload. Only configured profile fields and aggregate statistics are public.
+- Render user content through Jinja autoescaping. Keep the serialized profile
+  payload allowlisted and run the site validator before replacement or deploy.
+- Build beside the destination, validate, then replace with rollback. Render,
+  validation, or replacement failures preserve the previous site; deploy
+  failures keep the new validated local build.
+- Deploy commands are argv lists executed with `shell=False`. A command or
+  relevant configuration change invalidates approval.
+- Scheduler changes may touch only the deterministic job owned by the current
+  profile. Enable scheduling only after a validated build and approved deploy.
+- Packaged templates, starters, and assets are source. Generated
+  `.tokenmaxxing/` state is not.
+- Windows batch launchers are not equivalent to shell-free native argv
+  execution and must remain rejected.
 
 ## Style
 
@@ -62,6 +88,15 @@ uv build
 
 Run the focused harness test after changing an importer, then run the complete
 suite before claiming completion.
+
+For profile work, run the smallest relevant file first. The usual focused
+gates are:
+
+```bash
+uv run pytest tests/profile
+uv run pytest tests/test_cli.py tests/profile/test_cli.py
+uv run pytest tests/profile/test_package.py tests/profile/test_end_to_end.py
+```
 
 ## Commits
 

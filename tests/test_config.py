@@ -1,6 +1,9 @@
 from pathlib import Path
 from stat import S_IMODE
 
+import pytest
+
+from tokenmaxxing import config
 from tokenmaxxing.config import (
     default_paths,
     hash_workspace,
@@ -30,6 +33,37 @@ def test_default_paths_support_portable_platform_locations(tmp_path: Path) -> No
     assert default_paths(
         tmp_path, {"TOKENMAXXING_HOME": "/custom"}, "linux"
     ).data_dir == (Path("/custom"))
+
+
+def test_windows_data_dir_uses_local_app_data(tmp_path: Path) -> None:
+    paths = default_paths(
+        tmp_path,
+        {"LOCALAPPDATA": r"C:\Users\Ada\AppData\Local"},
+        "win32",
+    )
+
+    assert paths.data_dir == Path(r"C:\Users\Ada\AppData\Local") / "tokenmaxxing"
+
+
+def test_windows_data_dir_falls_back_under_user_profile(tmp_path: Path) -> None:
+    paths = default_paths(tmp_path, {}, "win32")
+
+    assert paths.data_dir == tmp_path / "AppData" / "Local" / "tokenmaxxing"
+
+
+def test_windows_accepts_a_valid_salt_when_chmod_is_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "salt"
+    path.write_bytes(b"s" * 32)
+    monkeypatch.setattr(config.sys, "platform", "win32")
+
+    def unavailable_chmod(path: Path, mode: int) -> None:
+        raise OSError("POSIX modes are unavailable")
+
+    monkeypatch.setattr(config.os, "chmod", unavailable_chmod)
+
+    assert load_or_create_salt(path) == b"s" * 32
 
 
 def test_workspace_hash_is_stable_for_one_salt_and_changes_with_another() -> None:

@@ -11,6 +11,7 @@ from tokenmaxxing.models import (
     IssueDraft,
     LinkDraft,
     ObservationDraft,
+    ProfileUsageRow,
     Projection,
     ReportingRow,
     RunDraft,
@@ -519,8 +520,18 @@ class Repository:
             return UsageTotal(group=source, tokens=TokenUsage(), cost_nanos=None)
         return self._usage_total(_row_dict(cursor, row))
 
-    def reporting_rows(self) -> list[ReportingRow]:
-        cursor = self.connection.execute(
+    def _reporting_cursor(self, *, include_agent_key: bool) -> sqlite3.Cursor:
+        agent_key = (
+            ", CASE "
+            "WHEN e.run_id IS NOT NULL AND r.parent_run_id IS NOT NULL "
+            "THEN e.source || ':run:' || e.run_id "
+            "WHEN COALESCE(e.session_id, r.session_id) IS NOT NULL "
+            "THEN e.source || ':session:' || COALESCE(e.session_id, r.session_id) "
+            "ELSE NULL END AS agent_key"
+            if include_agent_key
+            else ""
+        )
+        return self.connection.execute(
             "SELECT e.source, e.granularity, "
             "COALESCE(e.provider, r.provider, s.provider) AS provider, "
             "COALESCE(e.response_model, e.model, r.model, "
@@ -535,32 +546,46 @@ class Repository:
             "e.derived_total_tokens, e.total_cost_nanos, "
             "COALESCE(e.service_tier, s.service_tier) AS service_tier, "
             "e.speed, e.inference_region "
+            f"{agent_key} "
             "FROM counted_usage_events e "
             "LEFT JOIN runs r ON r.id = e.run_id "
             "LEFT JOIN sessions s ON s.id = COALESCE(e.session_id, r.session_id) "
             "ORDER BY e.source, resolved_model, occurred_at_ns"
         )
+
+    @staticmethod
+    def _reporting_row(row: tuple[object, ...]) -> ReportingRow:
+        return ReportingRow(
+            source=cast(Source, row[0]),
+            granularity=cast(Granularity, row[1]),
+            provider=cast(str | None, row[2]),
+            resolved_model=cast(str, row[3]),
+            requested_model=cast(str | None, row[4]),
+            occurred_at_ns=cast(int | None, row[5]),
+            input_tokens=cast(int | None, row[6]),
+            output_tokens=cast(int | None, row[7]),
+            cache_read_tokens=cast(int | None, row[8]),
+            cache_write_tokens=cast(int | None, row[9]),
+            cache_write_5m_tokens=cast(int | None, row[10]),
+            cache_write_1h_tokens=cast(int | None, row[11]),
+            reasoning_tokens=cast(int | None, row[12]),
+            reported_total_tokens=cast(int | None, row[13]),
+            derived_total_tokens=cast(int | None, row[14]),
+            total_cost_nanos=cast(int | None, row[15]),
+            service_tier=cast(str | None, row[16]),
+            speed=cast(str | None, row[17]),
+            inference_region=cast(str | None, row[18]),
+        )
+
+    def reporting_rows(self) -> list[ReportingRow]:
+        cursor = self._reporting_cursor(include_agent_key=False)
+        return [self._reporting_row(row) for row in cursor.fetchall()]
+
+    def profile_reporting_rows(self) -> list[ProfileUsageRow]:
+        cursor = self._reporting_cursor(include_agent_key=True)
         return [
-            ReportingRow(
-                source=cast(Source, row[0]),
-                granularity=cast(Granularity, row[1]),
-                provider=cast(str | None, row[2]),
-                resolved_model=cast(str, row[3]),
-                requested_model=cast(str | None, row[4]),
-                occurred_at_ns=cast(int | None, row[5]),
-                input_tokens=cast(int | None, row[6]),
-                output_tokens=cast(int | None, row[7]),
-                cache_read_tokens=cast(int | None, row[8]),
-                cache_write_tokens=cast(int | None, row[9]),
-                cache_write_5m_tokens=cast(int | None, row[10]),
-                cache_write_1h_tokens=cast(int | None, row[11]),
-                reasoning_tokens=cast(int | None, row[12]),
-                reported_total_tokens=cast(int | None, row[13]),
-                derived_total_tokens=cast(int | None, row[14]),
-                total_cost_nanos=cast(int | None, row[15]),
-                service_tier=cast(str | None, row[16]),
-                speed=cast(str | None, row[17]),
-                inference_region=cast(str | None, row[18]),
+            ProfileUsageRow(
+                usage=self._reporting_row(row), agent_key=cast(str | None, row[19])
             )
             for row in cursor.fetchall()
         ]

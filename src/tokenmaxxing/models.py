@@ -135,6 +135,12 @@ class ReportingRow:
 
 
 @dataclass(frozen=True, slots=True)
+class ProfileUsageRow:
+    usage: ReportingRow
+    agent_key: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class ObservationDraft:
     source: Source
     channel: Channel

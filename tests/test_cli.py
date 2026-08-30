@@ -4,7 +4,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from io import StringIO
 from pathlib import Path
-from zoneinfo import TZPATH
+from zoneinfo import TZPATH, ZoneInfo
 
 import pytest
 
@@ -403,6 +403,26 @@ def test_local_timezone_preserves_dst_rules_from_a_copied_tzfile(
 
     timezone = _local_timezone(localtime)
 
+    assert datetime(2026, 1, 15, 12, tzinfo=UTC).astimezone(timezone).utcoffset() == timedelta(
+        hours=-5
+    )
+    assert datetime(2026, 7, 15, 12, tzinfo=UTC).astimezone(timezone).utcoffset() == timedelta(
+        hours=-4
+    )
+
+
+def test_local_timezone_uses_tzlocal_before_a_fixed_offset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tokenmaxxing import cli
+
+    expected = ZoneInfo("America/New_York")
+    monkeypatch.delenv("TZ", raising=False)
+    monkeypatch.setattr(cli.tzlocal, "get_localzone", lambda: expected)
+
+    timezone = cli._local_timezone(tmp_path / "missing-localtime")
+
+    assert timezone is expected
     assert datetime(2026, 1, 15, 12, tzinfo=UTC).astimezone(timezone).utcoffset() == timedelta(
         hours=-5
     )
@@ -846,4 +866,52 @@ def test_sync_debug_propagates_the_original_source_error(
     with pytest.raises(RuntimeError) as raised:
         cli.main(["--debug", "--db", str(tmp_path / "usage.sqlite3"), "sync"])
 
+    assert raised.value is expected
+
+
+def test_unknown_root_command_never_falls_through_to_export(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tokenmaxxing import cli
+
+    monkeypatch.setattr(
+        cli, "_export", lambda arguments: pytest.fail("unknown command reached export")
+    )
+
+    with pytest.raises(SystemExit):
+        cli.main(["definitely-not-a-command"])
+
+
+def test_version_is_available_without_a_subcommand(capsys: pytest.CaptureFixture[str]) -> None:
+    from tokenmaxxing.cli import main
+
+    with pytest.raises(SystemExit) as raised:
+        main(["--version"])
+
+    assert raised.value.code == 0
+    assert capsys.readouterr().out.strip()
+
+
+def test_profile_errors_are_useful_and_debug_can_reraise(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tokenmaxxing import cli
+
+    expected = ValueError("profile configuration needs a canonical URL")
+    monkeypatch.setattr(
+        cli.profile_cli,
+        "run_profile",
+        lambda arguments: (_ for _ in ()).throw(expected),
+    )
+    command = ["profile", "--config", str(tmp_path / "tokenmaxxing.yaml"), "status"]
+
+    assert cli.main(command) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "error: profile configuration needs a canonical URL\n"
+
+    with pytest.raises(ValueError) as raised:
+        cli.main(["--debug", *command])
     assert raised.value is expected

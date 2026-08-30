@@ -7,13 +7,13 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
-from urllib.parse import quote
 
 from tokenmaxxing.models import (
     CostUsage,
     LinkDraft,
     ObservationDraft,
     Projection,
+    RunDraft,
     SessionDraft,
     SyncStats,
     TokenUsage,
@@ -162,7 +162,7 @@ def _milliseconds_ns(value: object) -> int | None:
 
 @contextmanager
 def _read_source(path: Path) -> Iterator[sqlite3.Connection]:
-    uri = f"file:{quote(str(path))}?mode=ro"
+    uri = path.resolve().as_uri() + "?mode=ro"
     source = sqlite3.connect(uri, uri=True, isolation_level=None)
     try:
         source.execute("PRAGMA query_only = ON")
@@ -297,19 +297,51 @@ def _root_database_id(repository: Repository, source_session_id: str) -> int | N
     return int(row[0]) if row is not None else None
 
 
-def _event_is_current(repository: Repository, row: _UsageRow, session_id: int | None) -> bool:
+def _run_drafts(sessions: tuple[SessionDraft, ...]) -> tuple[RunDraft, ...]:
+    return tuple(
+        RunDraft(
+            source="opencode",
+            source_session_id=session.source_session_id,
+            source_run_id=session.source_session_id,
+            parent_run_id=session.parent_session_id,
+            started_at_ns=session.started_at_ns,
+        )
+        for session in sessions
+        if session.parent_session_id is not None
+    )
+
+
+def _run_database_id(repository: Repository, source_session_id: str) -> int | None:
+    row = repository.connection.execute(
+        "SELECT r.id FROM runs r JOIN sessions s ON s.id = r.session_id "
+        "WHERE s.source = 'opencode' AND s.source_session_id = ? "
+        "AND r.source_run_id = ?",
+        (source_session_id, source_session_id),
+    ).fetchone()
+    return int(row[0]) if row is not None else None
+
+
+def _event_is_current(
+    repository: Repository,
+    row: _UsageRow,
+    session_id: int | None,
+    run_id: int | None,
+) -> bool:
     observation = repository.connection.execute(
         "SELECT 1 FROM observations WHERE source = 'opencode' AND channel = 'disk' AND stable_key = ?",
         (row.observation_key,),
     ).fetchone()
     event = repository.connection.execute(
-        "SELECT status, session_id FROM usage_events WHERE source = 'opencode' AND event_key = ?",
+        "SELECT status, session_id, run_id FROM usage_events "
+        "WHERE source = 'opencode' AND event_key = ?",
         (row.event_key,),
     ).fetchone()
-    return observation is not None and event == ("canonical", session_id)
+    return observation is not None and event == ("canonical", session_id, run_id)
 
 
-def _projection(row: _UsageRow, session_id: int | None) -> Projection:
+def _projection(
+    row: _UsageRow, session_id: int | None, run_id: int | None
+) -> Projection:
     observation = ObservationDraft(
         source="opencode",
         channel="disk",
@@ -337,6 +369,7 @@ def _projection(row: _UsageRow, session_id: int | None) -> Projection:
         tokens=row.tokens(),
         cost=row.cost_usage(),
         session_id=session_id,
+        run_id=run_id,
         provider=row.provider,
         model=row.model,
         effort=row.agent,
@@ -377,17 +410,20 @@ def sync_opencode(repository: Repository, roots: OpenCodeRoots) -> SyncStats:
     stats = SyncStats(artifacts_seen=1)
     with repository.transaction() as connection:
         session_writes = repository.apply_projection_in_transaction(
-            connection, Projection(sessions=sessions)
+            connection, Projection(sessions=sessions, runs=_run_drafts(sessions))
         )
         stats = _add_stats(stats, session_writes)
         seen = {row.event_key for row in rows}
         for row in rows:
             session_id = _root_database_id(repository, row.session_id)
-            if _event_is_current(repository, row, session_id):
+            run_id = _run_database_id(repository, row.session_id)
+            if _event_is_current(repository, row, session_id, run_id):
                 continue
             stats = _add_stats(
                 stats,
-                repository.apply_projection_in_transaction(connection, _projection(row, session_id)),
+                repository.apply_projection_in_transaction(
+                    connection, _projection(row, session_id, run_id)
+                ),
             )
         placeholders = ", ".join("?" for _ in seen)
         query = "UPDATE usage_events SET status = 'excluded' WHERE source = 'opencode' AND status != 'excluded'"

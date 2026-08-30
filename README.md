@@ -1,121 +1,164 @@
 # Tokenmaxxing
 
-Tokenmaxxing counts historical token usage from local Codex, Claude Code, Pi,
-and OpenCode histories. It stores only the metadata needed for incremental
-accounting and reports aggregate personal statistics.
+Tokenmaxxing imports local Codex, Claude Code, Pi, and OpenCode history, then
+turns it into readable 28-day stats and an optional static profile. Prompts,
+responses, reasoning, tool content, and raw workspace paths stay out of its
+database and published output.
 
 ## Install
 
-Python 3.12+ and [uv](https://docs.astral.sh/uv/) are required.
-
-From a source checkout:
+Tokenmaxxing requires Python 3.12+. Install the CLI once; profile projects are
+ordinary folders that remain yours.
 
 ```bash
+# From this checkout
 uv tool install .
-```
 
-After publication to PyPI:
-
-```bash
+# After publication to PyPI
 uv tool install tokenmaxxing-history
 ```
 
-## Use
+## First five minutes
 
 ```bash
 tokenmaxxing sync
 tokenmaxxing stats
-tokenmaxxing stats --period 7d
-tokenmaxxing stats --period all --group-by harness
-tokenmaxxing stats --group-by day --json
-tokenmaxxing export
-tokenmaxxing export usage.json
+tokenmaxxing profile init ~/my-token-profile
+cd ~/my-token-profile
+tokenmaxxing profile preview
+tokenmaxxing profile publish
+tokenmaxxing profile schedule enable
 ```
 
-`sync` imports the four supported local histories, prints one concise status
-per harness, and suggests the next stats command. `stats` defaults to a
-28-day model leaderboard with compact token totals and an approximate public
-API-equivalent value. Use `--period 7d`,
-`--period 28d`, or `--period all` to choose a local-day window, and
-`--group-by harness` or `--group-by day` for the secondary views. Human output
-does not show percentages; `--json` keeps raw model names and adds the selected
-period and view as deterministic metadata. `export` writes aggregate JSON only.
-With no path it creates `./tokenmaxxing-export.json`; pass a `.json` file or an
-existing directory to choose another destination.
+`profile init` creates editable YAML and CSS plus an ignore file for generated
+state. Add an avatar or editable templates only when you need them. Generated
+statistics and the built site live under the ignored `.tokenmaxxing/`
+directory. Keep the profile project in any repository you like, but never
+commit `.tokenmaxxing/` or the local Tokenmaxxing database. Enable the daily
+schedule only after an interactive publish has shown and approved the exact
+deploy command.
 
-By default, Tokenmaxxing reads:
+See [Profile publishing](docs/profile-publishing.md) for configuration,
+hosting, approval, scheduler, and platform details.
 
-| Harness | Default location |
-| --- | --- |
-| Codex | `~/.codex` |
-| Claude Code | `~/.claude/projects` |
-| Pi | `~/.pi/agent/sessions` |
-| OpenCode | `$XDG_DATA_HOME/opencode/opencode.db`, or `~/.local/share/opencode/opencode.db` |
+## Commands
 
-The local database is `~/Library/Application Support/tokenmaxxing/tokenmaxxing.sqlite3`
-on macOS. On other POSIX systems it is
-`$XDG_DATA_HOME/tokenmaxxing/tokenmaxxing.sqlite3`, or
-`~/.local/share/tokenmaxxing/tokenmaxxing.sqlite3`.
+```text
+tokenmaxxing [--db PATH] [--debug] <command>
+|-- sync [--source all|codex|claude|pi|opencode] [--json]
+|-- stats [--period 7d|28d|all] [--group-by model|harness|day] [--json]
+|-- export [PATH] [--timezone ZONE]
+`-- profile [--config PATH] <command>
+    |-- init [DIRECTORY] [--no-setup] [--editable-template] [--force]
+    |-- edit [--publish]
+    |-- preview [--host HOST] [--port PORT] [--no-open]
+    |-- build [--output DIRECTORY] [--json]
+    |-- publish [--sync] [--non-interactive] [--json]
+    |-- status [--json]
+    `-- schedule [enable|disable|status]
+```
 
-Set `TOKENMAXXING_HOME` to move the local data directory, use `--db PATH` to
-choose one database, and use `sync --codex-root`, `--claude-root`, `--pi-root`,
-or `--opencode-db` to choose source locations. Run `tokenmaxxing --help` for
-all options.
+Place `--config` between `profile` and its command:
+
+```bash
+tokenmaxxing --db ./usage.sqlite3 profile --config ./tokenmaxxing.yaml build
+```
+
+Without `--config`, profile commands search the current directory and its
+parents for `tokenmaxxing.yaml`. `profile init` does not accept `--config`;
+its directory argument selects the new project. `profile schedule` with no
+action is the same as `profile schedule status`.
+
+Canonical profile URLs must be absolute HTTPS URLs without credentials, a
+query, or a fragment. Tokenmaxxing adds a trailing slash so subpath assets and
+the sitemap resolve beneath the configured profile URL. New profiles remain
+`noindex` until `site.indexable` is explicitly changed to `true`.
+
+`sync` is incremental and idempotent. `stats` defaults to a 28-day model view
+with compact token totals and an approximate public API-equivalent value.
+`export` writes aggregate JSON to `./tokenmaxxing-export.json` by default; a
+`.json` path or existing directory chooses another destination.
+
+## Publish without Git activity
+
+Deployment is a local argv list in `tokenmaxxing.yaml`, not a shell command:
+
+```yaml
+deploy:
+  command:
+    - npx
+    - wrangler
+    - deploy
+    - --assets
+    - "{site_dir}"
+```
+
+Login remains with the provider's CLI. Tokenmaxxing stores no provider token.
+It validates and installs the new local build before starting deployment, so a
+failed deploy leaves that new validated build available to inspect or retry.
+Render, validation, or replacement failure preserves the previous successful
+local site. Any deploy-command change requires fresh interactive approval.
+
+Daily updates use the operating system rather than a resident daemon: a user
+LaunchAgent on macOS, a user systemd timer on Linux, or a current-user Task
+Scheduler job on Windows. Linux without user systemd prints a cron recipe.
+Windows deploy commands must start with a native executable; `.cmd` and `.bat`
+launchers are rejected. For example, use `node.exe` and the provider CLI's
+JavaScript entry point as separate arguments.
+
+## Local data
+
+| Platform | Tokenmaxxing data | OpenCode default |
+| --- | --- | --- |
+| macOS | `~/Library/Application Support/tokenmaxxing` | `~/.local/share/opencode/opencode.db` |
+| Linux | `${XDG_DATA_HOME:-~/.local/share}/tokenmaxxing` | `${XDG_DATA_HOME:-~/.local/share}/opencode/opencode.db` |
+| Windows | `%LOCALAPPDATA%\tokenmaxxing` | `%USERPROFILE%\.local\share\opencode\opencode.db` |
+
+The other imported histories default to `~/.codex`, `~/.claude/projects`, and
+`~/.pi/agent/sessions`. Set `TOKENMAXXING_HOME` to move Tokenmaxxing state,
+use global `--db PATH` for one database, or pass the source-path options shown
+by `tokenmaxxing sync --help`.
 
 ChatGPT desktop history and live rate limits are not supported.
 
-## Architecture
+## Accuracy, estimates, and privacy
 
-Each harness has a small source-specific importer. Parsers produce privacy-safe
-observations, reconciliation collapses copies and progressive snapshots into
-semantic usage events, and shared reporting reads only counted events. See
-[Architecture](docs/architecture.md) for identities and source-specific rules.
+Event identity is source-scoped; timestamps never merge unrelated events.
+Copied and progressive histories reconcile to one semantic event. Only
+canonical and safely provisional events count. Totals prefer a source-reported
+total, then a derived total, then non-overlapping components, so reasoning and
+cached input are not blindly added twice.
 
-## Accounting semantics
+Pi source cost and OpenCode's upstream estimate take precedence, including a
+known zero. Other events use the dated public
+[rate card](src/tokenmaxxing/data/rate-card.json) only when billable components
+fully reconcile with the canonical total. Human stats show an estimate only at
+95% token coverage. Unsupported models and modifiers remain unpriced, not
+zero. This is an approximate token API equivalent, not a bill; subscriptions,
+tools, cache storage time, images, audio, and video are excluded.
 
-Repeated imports are idempotent. Canonical and safely provisional events are
-counted; stale, superseded, contradictory, and non-usage records are retained
-but excluded from totals. Reporting prefers a source-reported total, then a
-derived total, then non-overlapping token components. Reasoning and cached input
-may overlap other source components and are not blindly added again.
+The SQLite database contains stable identifiers needed for reconciliation even
+though it excludes source text. Treat the database, its `-wal` and `-shm`
+companions, and `salt` as private. The static profile contains only configured
+public fields and aggregate statistics.
 
-## Costs and privacy
+See [Architecture](docs/architecture.md) for exact source identities and
+accounting rules.
 
-Pi reports source-provided cost and OpenCode cost is an upstream estimate.
-Those values take precedence, including known zero-cost usage. Other events use
-the dated public prices in
-[`src/tokenmaxxing/data/rate-card.json`](src/tokenmaxxing/data/rate-card.json)
-when every non-zero token component can be priced. The bundled card covers
-popular OpenAI, Anthropic, Gemini, DeepSeek, GLM, Kimi, Grok, Mistral, and Qwen
-text models and can be extended without changing the estimator.
-
-Catalog estimates also require the billable components to reconcile with the
-canonical event total. Human stats show the estimate only when at least 95% of
-the window's tokens are priced; otherwise the value is omitted instead of
-showing a misleading partial total. JSON always includes the raw coverage.
-
-This is an approximate token API equivalent, not an actual bill. It excludes
-subscriptions and unrecorded charges such as tools, cache storage time, images,
-audio, and video. Unknown models or missing component rates are reported as
-unpriced rather than zero; JSON stats include exact nanodollars and coverage
-counts.
-
-Tokenmaxxing does not store prompts, model text, reasoning text, tool content,
-or raw working-directory paths. Its database still contains identifiers used
-for deterministic accounting. Never publish the database, `salt`, or SQLite
-`-wal` and `-shm` files.
-
-To remove all local Tokenmaxxing data, delete the selected data directory:
+## Remove local data
 
 ```bash
 # macOS
 rm -rf "$HOME/Library/Application Support/tokenmaxxing"
 
-# Other POSIX systems, unless TOKENMAXXING_HOME is set
+# Linux, unless TOKENMAXXING_HOME is set
 rm -rf "${XDG_DATA_HOME:-$HOME/.local/share}/tokenmaxxing"
+
+# PowerShell, unless TOKENMAXXING_HOME is set
+Remove-Item -Recurse -Force "$env:LOCALAPPDATA\tokenmaxxing"
 ```
 
-If `TOKENMAXXING_HOME` is set, delete that directory instead.
+If `TOKENMAXXING_HOME` is set, remove that directory instead.
 
 ## Development
 
@@ -124,15 +167,8 @@ uv sync --locked
 uv run pytest
 uv run ruff check .
 git diff --check
+uv build
 ```
 
-## Contributing
-
-Read [AGENTS.md](AGENTS.md) for the module map, accounting invariants, privacy
-boundary, style, and verification requirements. Keep source-specific behavior
-explicit and avoid adding abstraction that makes a small importer harder to
-follow.
-
-## License
-
-[MIT](LICENSE)
+Read [AGENTS.md](AGENTS.md) before changing accounting, privacy, profile, or
+deployment behavior. Tokenmaxxing is licensed under the [MIT License](LICENSE).

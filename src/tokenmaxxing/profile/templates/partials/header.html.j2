@@ -1,0 +1,22 @@
+<aside class="profile-rail" aria-label="Profile">
+  <p class="wordmark">tokenmaxxing</p>
+  {% if profile.avatar %}
+  <img class="avatar" src="{{ profile.avatar }}" alt="{{ profile.name }}">
+  {% else %}
+  <div class="avatar avatar-fallback" aria-hidden="true">{{ profile.name[:1]|upper }}</div>
+  {% endif %}
+  <h2 class="profile-name">{{ profile.name }}</h2>
+  {% if profile.role %}<p class="profile-title">{{ profile.role }}</p>{% endif %}
+  {% if profile.bio %}<p class="profile-bio">{{ profile.bio }}</p>{% endif %}
+  {% if profile.links %}
+  <ul class="profile-links">
+    {% for link in profile.links %}<li><a href="{{ link.url }}"><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M6.4 3.2h-2A2.4 2.4 0 0 0 2 5.6v6A2.4 2.4 0 0 0 4.4 14h6a2.4 2.4 0 0 0 2.4-2.4v-2h-1.6v2a.8.8 0 0 1-.8.8h-6a.8.8 0 0 1-.8-.8v-6a.8.8 0 0 1 .8-.8h2V3.2Zm1.2-1.6v1.6h4.07L6.23 8.63l1.14 1.14 5.43-5.44V8.4h1.6V1.6H7.6Z" fill="currentColor"/></svg><span>{{ link.value }}</span><span class="visually-hidden"> — {{ link.label }}</span></a></li>{% endfor %}
+  </ul>
+  {% endif %}
+  {% if awards %}
+  <section class="profile-awards" aria-labelledby="awards-title">
+    <h3 id="awards-title">Awards</h3>
+    <div class="awards-list">{% for award in awards %}<button class="award-medal award-{{ award.modifier }}" style="--award-index: {{ loop.index0 }}" type="button" aria-describedby="award-detail-{{ loop.index }}" aria-expanded="false" aria-label="{{ award.name }}. {{ award.description }} {{ award.metric }}.{% if award.earned_on %} Earned {{ award.earned_on|date }}.{% endif %}"><svg class="award-art" viewBox="0 0 48 48" aria-hidden="true" focusable="false"><use href="assets/icons/awards.svg#award-{{ award.modifier }}"></use></svg><span class="award-copy" aria-hidden="true"><span class="award-name">{{ award.name }}</span><span class="award-summary">{{ award.metric }}</span></span><span class="award-tooltip" id="award-detail-{{ loop.index }}" role="tooltip"><strong>{{ award.name }}</strong><span>{{ award.description }}</span><span class="award-metric">{{ award.metric }}{% if award.earned_on %} · {{ award.earned_on|date }}{% endif %}</span></span></button>{% endfor %}</div>
+  </section>
+  {% endif %}
+</aside>

@@ -1,0 +1,15 @@
+<section class="content-section" aria-labelledby="activity-title">
+  <div class="section-heading"><h2 id="activity-title">Activity</h2></div>
+  <div class="activity-grid" data-roving="activity" aria-label="Daily token activity">
+    {% set focus = namespace(assigned=false) %}
+    {% for day in stats.activity %}
+    {% if day.state == "untracked" %}
+    <span class="activity-cell state-untracked" aria-hidden="true" data-level="0"></span>
+    {% else %}
+    <button class="activity-cell state-{{ day.state }}" type="button" data-level="{{ day.level }}" data-tooltip="{{ day.date }} · {{ day.tokens|tokens }} tokens{% for model in day.models %}&#10;{{ model.name }} · {{ model.tokens|tokens }}{% endfor %}" aria-label="{{ day.date }}: {{ day.tokens|tokens }} tokens" aria-describedby="activity-tooltip" aria-expanded="false" tabindex="{{ 0 if not focus.assigned else -1 }}"></button>
+    {% set focus.assigned = true %}
+    {% endif %}
+    {% endfor %}
+  </div>
+  <div class="activity-legend" aria-hidden="true"><span>Less</span>{% for level in range(5) %}<i data-level="{{ level }}"></i>{% endfor %}<span>More</span></div>
+</section>

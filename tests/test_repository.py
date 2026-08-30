@@ -6,6 +6,8 @@ from tokenmaxxing.models import (
     LinkDraft,
     ObservationDraft,
     Projection,
+    RunDraft,
+    SessionDraft,
     TokenUsage,
     UsageEventDraft,
 )
@@ -233,3 +235,144 @@ def test_grouped_totals_sum_countable_events_only(repo: Repository) -> None:
 
     with pytest.raises(ValueError, match="group_by"):
         repo.totals(group_by="event_key; DROP TABLE usage_events")
+
+
+def test_profile_reporting_rows_group_root_and_child_executions_privately(
+    repo: Repository,
+) -> None:
+    repo.apply_projection(
+        Projection(
+            sessions=tuple(
+                SessionDraft(source="codex", source_session_id=f"session-{index}")
+                for index in range(1, 5)
+            ),
+            runs=(
+                RunDraft(
+                    source="codex",
+                    source_session_id="session-1",
+                    source_run_id="root-sentinel",
+                ),
+                RunDraft(
+                    source="codex",
+                    source_session_id="session-2",
+                    source_run_id="child",
+                    parent_run_id="root-sentinel",
+                ),
+                RunDraft(
+                    source="codex",
+                    source_session_id="session-3",
+                    source_run_id="grandchild",
+                    parent_run_id="child",
+                ),
+            ),
+        )
+    )
+    session_ids = {
+        source_id: database_id
+        for database_id, source_id in repo.connection.execute(
+            "SELECT id, source_session_id FROM sessions ORDER BY id"
+        )
+    }
+    run_ids = {
+        source_id: database_id
+        for database_id, source_id in repo.connection.execute(
+            "SELECT id, source_run_id FROM runs ORDER BY id"
+        )
+    }
+    events = (
+        UsageEventDraft(
+            source="codex",
+            event_key="root-direct",
+            granularity="counter_delta",
+            status="canonical",
+            tokens=TokenUsage(input=10),
+            model="a-root-direct",
+            session_id=session_ids["session-1"],
+        ),
+        UsageEventDraft(
+            source="codex",
+            event_key="root-sentinel",
+            granularity="counter_delta",
+            status="canonical",
+            tokens=TokenUsage(input=20),
+            model="b-root-sentinel",
+            run_id=run_ids["root-sentinel"],
+        ),
+        UsageEventDraft(
+            source="codex",
+            event_key="child-1",
+            granularity="counter_delta",
+            status="canonical",
+            tokens=TokenUsage(input=30),
+            model="c-child-1",
+            run_id=run_ids["child"],
+        ),
+        UsageEventDraft(
+            source="codex",
+            event_key="child-2",
+            granularity="counter_delta",
+            status="provisional",
+            tokens=TokenUsage(input=40),
+            model="d-child-2",
+            run_id=run_ids["child"],
+        ),
+        UsageEventDraft(
+            source="codex",
+            event_key="grandchild",
+            granularity="counter_delta",
+            status="canonical",
+            tokens=TokenUsage(input=50),
+            model="e-grandchild",
+            run_id=run_ids["grandchild"],
+        ),
+        UsageEventDraft(
+            source="codex",
+            event_key="unidentified",
+            granularity="counter_delta",
+            status="canonical",
+            tokens=TokenUsage(input=60),
+            model="f-unidentified",
+        ),
+        UsageEventDraft(
+            source="codex",
+            event_key="zero",
+            granularity="counter_delta",
+            status="canonical",
+            tokens=TokenUsage(input=0),
+            model="g-zero",
+            session_id=session_ids["session-4"],
+        ),
+        UsageEventDraft(
+            source="codex",
+            event_key="excluded",
+            granularity="counter_delta",
+            status="excluded",
+            tokens=TokenUsage(input=70),
+            model="h-excluded",
+            session_id=session_ids["session-4"],
+        ),
+        UsageEventDraft(
+            source="codex",
+            event_key="conflicted",
+            granularity="counter_delta",
+            status="conflicted",
+            tokens=TokenUsage(input=80),
+            model="i-conflicted",
+            session_id=session_ids["session-4"],
+        ),
+    )
+    repo.apply_projection(Projection(events=events))
+
+    rows = repo.profile_reporting_rows()
+
+    assert [row.agent_key for row in rows] == [
+        "codex:session:1",
+        "codex:session:1",
+        "codex:run:2",
+        "codex:run:2",
+        "codex:run:3",
+        None,
+        "codex:session:4",
+    ]
+    assert repo.reporting_rows() == [row.usage for row in rows]
+    assert all(not hasattr(row.usage, "agent_key") for row in rows)

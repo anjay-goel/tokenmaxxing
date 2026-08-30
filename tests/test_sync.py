@@ -38,6 +38,26 @@ def test_defaults_use_standard_local_history_locations(
     )
 
 
+def test_windows_opencode_default_remains_under_user_profile(tmp_path: Path) -> None:
+    roots = sync.SourceRoots.defaults(home=tmp_path, environ={}, platform="win32")
+
+    assert roots.opencode_db == (
+        tmp_path / ".local" / "share" / "opencode" / "opencode.db"
+    )
+
+
+def test_windows_opencode_default_ignores_xdg_data_home(tmp_path: Path) -> None:
+    roots = sync.SourceRoots.defaults(
+        home=tmp_path,
+        environ={"XDG_DATA_HOME": str(tmp_path / "xdg")},
+        platform="win32",
+    )
+
+    assert roots.opencode_db == (
+        tmp_path / ".local" / "share" / "opencode" / "opencode.db"
+    )
+
+
 def test_defaults_use_xdg_data_location_for_opencode(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
