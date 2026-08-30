@@ -191,7 +191,7 @@ def test_rename_and_copy_reparse_as_distinct_artifacts_without_duplicate_semanti
     scan_jsonl(repository, "codex", copied, project_semantic, object())
 
     assert repository.observation_count("codex") == 1
-    artifacts = repository._database.connection.execute("SELECT COUNT(*) FROM artifacts").fetchone()
+    artifacts = repository.connection.execute("SELECT COUNT(*) FROM artifacts").fetchone()
     assert artifacts == (3,)
 
 
@@ -211,7 +211,7 @@ def test_bad_json_records_a_content_free_issue_and_keeps_its_cursor(
     )
 
     assert [line.ordinal for line in first_lines] == [0]
-    issue = repository._database.connection.execute(
+    issue = repository.connection.execute(
         "SELECT category, severity, identifier, field_path, observed_type FROM issues"
     ).fetchone()
     assert issue == (
@@ -221,7 +221,7 @@ def test_bad_json_records_a_content_free_issue_and_keeps_its_cursor(
         "1",
         "JSONDecodeError",
     )
-    artifact = repository._database.connection.execute(
+    artifact = repository.connection.execute(
         "SELECT byte_offset FROM artifacts"
     ).fetchone()
     assert artifact == (len(b'{"type":"one"}\n'),)
@@ -252,4 +252,4 @@ def test_projection_and_cursor_commit_together(
         scan_jsonl(repository, "codex", path, fail_on_second, object())
 
     assert repository.observation_count("codex") == 0
-    assert repository._database.connection.execute("SELECT COUNT(*) FROM artifacts").fetchone() == (0,)
+    assert repository.connection.execute("SELECT COUNT(*) FROM artifacts").fetchone() == (0,)

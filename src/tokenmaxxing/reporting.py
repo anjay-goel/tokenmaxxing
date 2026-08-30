@@ -1,48 +1,81 @@
 from collections.abc import Callable, Iterable
-from datetime import datetime, tzinfo
-from typing import Literal, cast
+from dataclasses import dataclass
+from datetime import datetime, time, timedelta, tzinfo
+from typing import Literal
 
-from tokenmaxxing.models import JsonValue, UsageStat
+from tokenmaxxing.models import JsonValue, ReportingRow, UsageStat
 from tokenmaxxing.repository import Repository
 
 
 _GroupBy = Literal["source", "model", "day"]
+_Period = Literal["7d", "28d", "all"]
 
 
-def _integer(row: dict[str, object], name: str) -> int:
-    value = row[name]
-    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+@dataclass(frozen=True, slots=True)
+class ReportWindow:
+    period: _Period
+    start_ns: int | None
+    end_ns: int | None
 
-
-def _event_total(row: dict[str, object]) -> int:
-    reported_total = row["reported_total_tokens"]
-    if reported_total is not None:
-        return cast(int, reported_total)
-    derived_total = row["derived_total_tokens"]
-    if derived_total is not None:
-        return cast(int, derived_total)
-    return sum(
-        _integer(row, name)
-        for name in (
-            "input_tokens",
-            "output_tokens",
-            "cache_read_tokens",
-            "cache_write_tokens",
+    @classmethod
+    def from_period(
+        cls, period: _Period, timezone: tzinfo, now: datetime
+    ) -> "ReportWindow":
+        if now.tzinfo is None or now.utcoffset() is None:
+            raise ValueError("now must have an explicit timezone")
+        if period == "all":
+            return cls(period=period, start_ns=None, end_ns=None)
+        day_count = {"7d": 7, "28d": 28}[period]
+        today = now.astimezone(timezone).date()
+        start = datetime.combine(
+            today - timedelta(days=day_count - 1), time.min, tzinfo=timezone
         )
+        end = datetime.combine(today + timedelta(days=1), time.min, tzinfo=timezone)
+        return cls(
+            period=period,
+            start_ns=int(start.timestamp()) * 1_000_000_000,
+            end_ns=int(end.timestamp()) * 1_000_000_000,
+        )
+
+    def includes(self, row: ReportingRow) -> bool:
+        if self.start_ns is None or self.end_ns is None:
+            return True
+        return (
+            row.occurred_at_ns is not None
+            and self.start_ns <= row.occurred_at_ns < self.end_ns
+        )
+
+
+def _integer(value: int | None) -> int:
+    return value if value is not None else 0
+
+
+def event_total(row: ReportingRow) -> int:
+    reported_total = row.reported_total_tokens
+    if reported_total is not None:
+        return reported_total
+    derived_total = row.derived_total_tokens
+    if derived_total is not None:
+        return derived_total
+    total = (
+        _integer(row.input_tokens)
+        + _integer(row.output_tokens)
+        + _integer(row.cache_write_tokens)
     )
+    if row.source != "codex":
+        total += _integer(row.cache_read_tokens)
+    return total
 
 
-def _day(row: dict[str, object], timezone: tzinfo) -> str:
-    timestamp_ns = row["occurred_at_ns"]
+def _day(row: ReportingRow, timezone: tzinfo) -> str:
+    timestamp_ns = row.occurred_at_ns
     if timestamp_ns is None:
         return "(unknown)"
-    seconds = cast(int, timestamp_ns) // 1_000_000_000
+    seconds = timestamp_ns // 1_000_000_000
     return datetime.fromtimestamp(seconds, timezone).date().isoformat()
 
 
-def _aggregate(
-    rows: Iterable[dict[str, object]], group_for: Callable[[dict[str, object]], str]
-) -> tuple[UsageStat, ...]:
+def _aggregate(rows: Iterable[ReportingRow], group_for: Callable[[ReportingRow], str]) -> tuple[UsageStat, ...]:
     aggregates: dict[str, dict[str, int]] = {}
     for row in rows:
         group = group_for(row)
@@ -61,15 +94,15 @@ def _aggregate(
             },
         )
         aggregate["event_count"] += 1
-        aggregate["input_tokens"] += _integer(row, "input_tokens")
-        aggregate["output_tokens"] += _integer(row, "output_tokens")
-        aggregate["cache_read_tokens"] += _integer(row, "cache_read_tokens")
-        aggregate["cache_write_tokens"] += _integer(row, "cache_write_tokens")
-        aggregate["reasoning_tokens"] += _integer(row, "reasoning_tokens")
-        aggregate["total_tokens"] += _event_total(row)
-        cost_nanos = row["total_cost_nanos"]
+        aggregate["input_tokens"] += _integer(row.input_tokens)
+        aggregate["output_tokens"] += _integer(row.output_tokens)
+        aggregate["cache_read_tokens"] += _integer(row.cache_read_tokens)
+        aggregate["cache_write_tokens"] += _integer(row.cache_write_tokens)
+        aggregate["reasoning_tokens"] += _integer(row.reasoning_tokens)
+        aggregate["total_tokens"] += event_total(row)
+        cost_nanos = row.total_cost_nanos
         if cost_nanos is not None:
-            aggregate["cost_nanos"] += cast(int, cost_nanos)
+            aggregate["cost_nanos"] += cost_nanos
             aggregate["cost_covered_events"] += 1
     return tuple(
         UsageStat(
@@ -91,18 +124,25 @@ def _aggregate(
 
 
 def usage_stats(
-    repository: Repository, group_by: _GroupBy, timezone: tzinfo
+    repository: Repository,
+    group_by: _GroupBy,
+    timezone: tzinfo,
+    *,
+    window: ReportWindow | None = None,
 ) -> tuple[UsageStat, ...]:
-    return _usage_stats_rows(repository._reporting_rows(), group_by, timezone)
+    rows = repository.reporting_rows()
+    if window is not None:
+        rows = [row for row in rows if window.includes(row)]
+    return usage_stats_rows(rows, group_by, timezone)
 
 
-def _usage_stats_rows(
-    rows: Iterable[dict[str, object]], group_by: _GroupBy, timezone: tzinfo
+def usage_stats_rows(
+    rows: Iterable[ReportingRow], group_by: _GroupBy, timezone: tzinfo
 ) -> tuple[UsageStat, ...]:
     if group_by == "source":
-        return _aggregate(rows, lambda row: cast(str, row["source"]))
+        return _aggregate(rows, lambda row: row.source)
     if group_by == "model":
-        return _aggregate(rows, lambda row: cast(str, row["resolved_model"]))
+        return _aggregate(rows, lambda row: row.resolved_model)
     if group_by == "day":
         return _aggregate(rows, lambda row: _day(row, timezone))
     raise ValueError(f"unsupported group_by: {group_by}")
@@ -126,7 +166,7 @@ def export_payload(
 ) -> dict[str, JsonValue]:
     if generated_at.tzinfo is None or generated_at.utcoffset() is None:
         raise ValueError("generated_at must have an explicit timezone")
-    rows = repository._reporting_rows()
+    rows = repository.reporting_rows()
     overall = _aggregate(rows, lambda row: "all")
     overall_stat = (
         overall[0]
@@ -150,12 +190,12 @@ def export_payload(
         "timezone": _timezone_name(timezone),
         "overall": _export_stat(overall_stat),
         "by_source": [
-            _export_stat(stat) for stat in _usage_stats_rows(rows, "source", timezone)
+            _export_stat(stat) for stat in usage_stats_rows(rows, "source", timezone)
         ],
         "by_model": [
-            _export_stat(stat) for stat in _usage_stats_rows(rows, "model", timezone)
+            _export_stat(stat) for stat in usage_stats_rows(rows, "model", timezone)
         ],
         "by_day": [
-            _export_stat(stat) for stat in _usage_stats_rows(rows, "day", timezone)
+            _export_stat(stat) for stat in usage_stats_rows(rows, "day", timezone)
         ],
     }

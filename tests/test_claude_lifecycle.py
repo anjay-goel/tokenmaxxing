@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-import tokenmaxxing.ingest.claude as claude_import
+import tokenmaxxing.ingest.claude.reconcile as claude_import
 from tokenmaxxing.ingest.claude import sync_claude
 from tokenmaxxing.models import (
     LinkDraft,
@@ -15,84 +15,16 @@ from tokenmaxxing.models import (
     WriteStats,
 )
 from tokenmaxxing.repository import Repository
+from claude_support import (
+    _assistant,
+    _usage,
+    _write_jsonl,
+)
 
 
 @pytest.fixture
 def claude_fixtures() -> Path:
     return Path(__file__).parent / "fixtures" / "claude"
-
-
-def _copy(source: Path, destination: Path) -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_bytes(source.read_bytes())
-
-
-def _write_jsonl(path: Path, records: list[dict[str, object]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        "".join(json.dumps(record, separators=(",", ":")) + "\n" for record in records),
-        encoding="utf-8",
-    )
-
-
-def _usage(*, input_tokens: int = 1, output_tokens: int = 1) -> dict[str, object]:
-    return {
-        "input_tokens": input_tokens,
-        "output_tokens": output_tokens,
-        "cache_read_input_tokens": 0,
-        "cache_creation_input_tokens": 0,
-    }
-
-
-def _assistant(
-    message_id: str | None,
-    uuid: str,
-    *,
-    session_id: str = "test-session",
-    usage: object | None = None,
-    iterations: list[dict[str, object]] | None = None,
-    sidechain: bool = False,
-) -> dict[str, object]:
-    usage_value = _usage() if usage is None else usage
-    if iterations is not None and isinstance(usage_value, dict):
-        usage_value = {**usage_value, "iterations": iterations}
-    message: dict[str, object] = {
-        "model": "base-model",
-        "stop_reason": "end_turn",
-        "content": [{"type": "text", "text": "PRIVATE_SENTINEL"}],
-        "usage": usage_value,
-    }
-    if message_id is not None:
-        message["id"] = message_id
-    return {
-        "timestamp": "2026-08-28T00:00:00Z",
-        "type": "assistant",
-        "sessionId": session_id,
-        "uuid": uuid,
-        "requestId": f"req-{uuid}",
-        "version": "2.1.232",
-        "entrypoint": "cli",
-        "isSidechain": sidechain,
-        "effort": "high",
-        "message": message,
-    }
-
-
-def test_progressive_snapshots_count_component_max_once(
-    repository: Repository, claude_fixtures: Path
-) -> None:
-    sync_claude(repository, claude_fixtures / "progressive.jsonl")
-
-    assert repository.observation_count("claude") == 3
-    assert repository.event_count("claude") == 1
-    assert repository.source_total("claude").tokens == TokenUsage(
-        input=2,
-        output=21,
-        cache_read=20,
-        cache_write=3,
-        cache_write_5m=1,
-        cache_write_1h=2,
-    )
 
 
 def test_rebuild_messages_chunks_under_sqlite_variable_limit(
@@ -112,7 +44,7 @@ def test_rebuild_messages_chunks_under_sqlite_variable_limit(
     sync_claude(repository, path)
     monkeypatch.setattr(claude_import, "_rebuild_messages", rebuild)
 
-    connection = repository._database.connection
+    connection = repository.connection
     if not hasattr(connection, "getlimit") or not hasattr(connection, "setlimit"):
         pytest.skip("sqlite variable limits are unavailable")
     variable_limit = sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER
@@ -126,166 +58,6 @@ def test_rebuild_messages_chunks_under_sqlite_variable_limit(
         connection.setlimit(variable_limit, original_limit)
 
     assert repository.source_total("claude").tokens.output == 51
-
-
-def test_iterations_replace_outer_and_keep_advisor_model(
-    repository: Repository, claude_fixtures: Path
-) -> None:
-    sync_claude(repository, claude_fixtures / "iterations.jsonl")
-
-    assert repository.list_event_keys("claude") == {
-        "claude:msg_1:iteration:0",
-        "claude:msg_1:iteration:1",
-    }
-    advisor = repository.get_event("claude:msg_1:iteration:1")
-    assert advisor is not None
-    assert advisor.model == "advisor-model"
-    assert repository.source_total("claude").tokens.output == 19
-
-
-def test_residual_counts_only_unexplained_positive_outer_usage(
-    repository: Repository, tmp_path: Path
-) -> None:
-    path = tmp_path / "residual.jsonl"
-    _write_jsonl(
-        path,
-        [
-            _assistant(
-                "msg_residual",
-                "entry-residual",
-                usage=_usage(input_tokens=2, output_tokens=15),
-                iterations=[
-                    {"type": "message", **_usage(input_tokens=2, output_tokens=10)},
-                    {
-                        "type": "advisor_message",
-                        "model": "advisor-model",
-                        **_usage(input_tokens=20, output_tokens=7),
-                    },
-                ],
-            )
-        ],
-    )
-
-    sync_claude(repository, path)
-
-    residual = repository.get_event("claude:msg_residual:residual")
-    assert residual is not None
-    assert residual.tokens == TokenUsage(
-        input=0,
-        output=5,
-        cache_read=0,
-        cache_write=0,
-        cache_write_5m=0,
-        cache_write_1h=0,
-    )
-    assert repository.source_total("claude").tokens.output == 22
-
-
-def test_negative_outer_minus_normal_iteration_is_conflicted(
-    repository: Repository, tmp_path: Path
-) -> None:
-    path = tmp_path / "conflict.jsonl"
-    _write_jsonl(
-        path,
-        [
-            _assistant(
-                "msg_conflict",
-                "entry-conflict",
-                usage=_usage(input_tokens=1, output_tokens=5),
-                iterations=[
-                    {"type": "message", **_usage(input_tokens=1, output_tokens=10)},
-                    {
-                        "type": "advisor_message",
-                        "model": "advisor-model",
-                        **_usage(input_tokens=20, output_tokens=3),
-                    },
-                ],
-            )
-        ],
-    )
-
-    sync_claude(repository, path)
-
-    normal = repository.get_event("claude:msg_conflict:iteration:0")
-    advisor = repository.get_event("claude:msg_conflict:iteration:1")
-    assert normal is not None and normal.status == "conflicted"
-    assert advisor is not None and advisor.status == "canonical"
-    assert repository.source_total("claude").tokens.output == 3
-    assert repository._database.connection.execute(
-        "SELECT category FROM issues WHERE source = 'claude'"
-    ).fetchone() == ("iteration_usage_conflict",)
-
-
-def test_usage_metadata_is_preserved_without_private_source_fields(
-    repository: Repository, db_path: Path, claude_fixtures: Path
-) -> None:
-    sync_claude(repository, claude_fixtures / "progressive.jsonl")
-
-    event = repository.get_event("claude:msg_progressive")
-    assert event is not None
-    assert event.service_tier == "standard"
-    assert event.speed == "fast"
-    assert event.inference_region == "us"
-    assert event.effort == "high"
-    assert event.web_search_count == 1
-    assert event.web_fetch_count == 2
-    assert repository._database.connection.execute(
-        "SELECT request_id FROM usage_events WHERE source = 'claude'"
-    ).fetchone() == ("req-progressive",)
-    assert repository._database.connection.execute(
-        "SELECT harness_version FROM sessions WHERE source = 'claude'"
-    ).fetchone() == ("2.1.232",)
-    assert repository._database.connection.execute(
-        "SELECT event_type, client_id FROM observations WHERE source = 'claude' "
-        "ORDER BY ordinal DESC LIMIT 1"
-    ).fetchone() == ("assistant", "cli")
-    database_files = (
-        db_path,
-        Path(f"{db_path}-wal"),
-        Path(f"{db_path}-shm"),
-    )
-    database_bytes = b"".join(
-        path.read_bytes() for path in database_files if path.exists()
-    )
-    assert b"PRIVATE_PROGRESSIVE_SENTINEL" not in database_bytes
-    assert str(claude_fixtures).encode() not in database_bytes
-
-
-def test_unknown_numeric_usage_metadata_is_kept_but_strings_are_dropped(
-    repository: Repository, db_path: Path, tmp_path: Path
-) -> None:
-    path = tmp_path / "extended-usage.jsonl"
-    record = _assistant("msg_extended", "entry-extended")
-    assert isinstance(record["message"], dict)
-    assert isinstance(record["message"]["usage"], dict)
-    record["message"]["usage"].update(
-        {
-            "new_counter": 7,
-            "new_flags": {"accelerated": True},
-            "new_label": "PRIVATE_ARBITRARY_STRING",
-        }
-    )
-    _write_jsonl(path, [record])
-
-    sync_claude(repository, path)
-
-    projection = repository._database.connection.execute(
-        "SELECT projection_json FROM observations WHERE source = 'claude'"
-    ).fetchone()
-    assert projection is not None
-    assert '"new_counter":7' in projection[0]
-    assert '"accelerated":true' in projection[0]
-    database_files = (
-        db_path,
-        Path(f"{db_path}-wal"),
-        Path(f"{db_path}-shm"),
-    )
-    database_bytes = b"".join(
-        database_file.read_bytes()
-        for database_file in database_files
-        if database_file.exists()
-    )
-    assert b"PRIVATE_ARBITRARY_STRING" not in database_bytes
 
 
 def test_repeat_sync_is_a_true_noop(
@@ -316,73 +88,6 @@ def test_incremental_append_updates_the_existing_message(
     assert appended.lines_read == 2
     assert repository.event_count("claude") == 1
     assert repository.source_total("claude").tokens.output == 21
-
-
-def test_root_and_subagent_copies_canonicalize_globally(
-    repository: Repository, tmp_path: Path, claude_fixtures: Path
-) -> None:
-    root = tmp_path / "project"
-    _copy(claude_fixtures / "root.jsonl", root / "root.jsonl")
-    _copy(
-        claude_fixtures / "subagents" / "agent-a.jsonl",
-        root / "subagents" / "agent-a.jsonl",
-    )
-
-    sync_claude(repository, root)
-
-    assert repository.observation_count("claude") == 3
-    assert repository.list_event_keys("claude") == {
-        "claude:msg_shared",
-        "claude:msg_agent",
-    }
-    assert repository.source_total("claude").tokens.output == 15
-    assert repository._database.connection.execute(
-        "SELECT event_type, client_id FROM observations "
-        "WHERE source = 'claude' AND response_id = 'msg_agent'"
-    ).fetchone() == ("assistant_sidechain", "cli")
-
-
-def test_missing_message_id_falls_back_to_session_and_transcript_uuid(
-    repository: Repository, tmp_path: Path
-) -> None:
-    path = tmp_path / "fallback.jsonl"
-    _write_jsonl(
-        path,
-        [_assistant(None, "entry-fallback", session_id="fallback-session")],
-    )
-
-    sync_claude(repository, path)
-
-    assert repository.list_event_keys("claude") == {
-        "claude:fallback-session:entry-fallback"
-    }
-
-
-def test_malformed_usage_records_issue_and_does_not_block_later_lines(
-    repository: Repository, tmp_path: Path
-) -> None:
-    path = tmp_path / "malformed.jsonl"
-    malformed = _assistant("msg_bad", "entry-bad")
-    assert isinstance(malformed["message"], dict)
-    malformed["message"]["usage"] = "PRIVATE_MALFORMED_SENTINEL"
-    _write_jsonl(
-        path,
-        [
-            _assistant("msg_before", "entry-before"),
-            malformed,
-            _assistant("msg_after", "entry-after"),
-        ],
-    )
-
-    sync_claude(repository, path)
-
-    assert repository.list_event_keys("claude") == {
-        "claude:msg_before",
-        "claude:msg_after",
-    }
-    assert repository._database.connection.execute(
-        "SELECT category, observed_type FROM issues WHERE source = 'claude'"
-    ).fetchone() == ("invalid_usage", "str")
 
 
 def test_replacement_excludes_events_removed_from_the_current_generation(
@@ -446,7 +151,7 @@ def test_sync_recovers_provisional_messages_after_interrupted_rebuild(
     monkeypatch.setattr(claude_import, "_rebuild_messages", interrupt_rebuild)
     with pytest.raises(RuntimeError, match="interrupted rebuild"):
         sync_claude(repository, claude_fixtures / "progressive.jsonl")
-    assert repository._database.connection.execute(
+    assert repository.connection.execute(
         "SELECT status FROM usage_events WHERE source = 'claude'"
     ).fetchall() == [("provisional",)]
 
@@ -455,7 +160,7 @@ def test_sync_recovers_provisional_messages_after_interrupted_rebuild(
 
     assert recovery.lines_read == 0
     assert repository.source_total("claude").tokens.output == 21
-    assert repository._database.connection.execute(
+    assert repository.connection.execute(
         "SELECT status FROM usage_events WHERE source = 'claude'"
     ).fetchall() == [("canonical",)]
 
@@ -500,7 +205,7 @@ def test_provisional_message_recovery_starts_from_the_event_status_index(
             ),
         )
     )
-    connection = repository._database.connection
+    connection = repository.connection
     statements: list[str] = []
     connection.set_trace_callback(statements.append)
     try:
@@ -564,7 +269,7 @@ def test_linked_event_recovery_starts_from_target_claude_message(
             ),
         )
     )
-    connection = repository._database.connection
+    connection = repository.connection
     statements: list[str] = []
     connection.set_trace_callback(statements.append)
     try:
@@ -631,7 +336,7 @@ def test_missing_artifact_is_excluded_and_rediscovery_restores_it(
     )
     sync_claude(repository, root)
     path.unlink()
-    repository._database.connection.execute(
+    repository.connection.execute(
         "UPDATE artifacts SET is_missing = 1 WHERE source = 'claude'"
     )
 
@@ -668,7 +373,7 @@ def test_same_inode_rediscovery_recovers_after_interrupted_rebuild(
     inode = path.stat().st_ino
     path.replace(parked)
     assert parked.stat().st_ino == inode
-    repository._database.connection.execute(
+    repository.connection.execute(
         "UPDATE artifacts SET is_missing = 1 WHERE source = 'claude'"
     )
     sync_claude(repository, root)
@@ -710,12 +415,12 @@ def test_missing_higher_copy_recomputes_from_the_surviving_global_message(
     )
     sync_claude(repository, root)
     high.unlink()
-    high_artifact = repository._database.connection.execute(
+    high_artifact = repository.connection.execute(
         "SELECT artifact_id FROM observations "
         "WHERE source = 'claude' AND projection_json LIKE '%\"output_tokens\":9%'"
     ).fetchone()
     assert high_artifact is not None
-    repository._database.connection.execute(
+    repository.connection.execute(
         "UPDATE artifacts SET is_missing = 1 WHERE id = ?",
         (high_artifact[0],),
     )
@@ -745,12 +450,12 @@ def test_stale_duplicate_message_falls_back_after_deletion_and_recovers_on_reapp
     sync_claude(repository, root)
 
     high.unlink()
-    high_artifact = repository._database.connection.execute(
+    high_artifact = repository.connection.execute(
         "SELECT artifact_id FROM observations "
         "WHERE source = 'claude' AND projection_json LIKE '%\"output_tokens\":9%'"
     ).fetchone()
     assert high_artifact is not None
-    repository._database.connection.execute(
+    repository.connection.execute(
         "UPDATE artifacts SET is_missing = 1 WHERE id = ?",
         (high_artifact[0],),
     )
@@ -776,10 +481,10 @@ def test_stale_message_recovery_uses_the_claude_turn_artifact_index(
         [_assistant("msg_stale", "entry-stale", usage=_usage(output_tokens=9))],
     )
     sync_claude(repository, path)
-    repository._database.connection.execute(
+    repository.connection.execute(
         "UPDATE artifacts SET is_missing = 1 WHERE source = 'claude'"
     )
-    connection = repository._database.connection
+    connection = repository.connection
     statements: list[str] = []
     connection.set_trace_callback(statements.append)
     try:

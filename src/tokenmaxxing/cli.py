@@ -2,20 +2,35 @@ import argparse
 import json
 import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager, nullcontext
 from dataclasses import asdict
+from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime, timedelta, timezone, tzinfo
 from pathlib import Path
+from threading import Event, Thread
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from rich.console import Console
+from rich.table import Table
+from rich.text import Text
 
 from tokenmaxxing.config import default_paths
 from tokenmaxxing.db import Database
 from tokenmaxxing.models import Source, UsageStat
-from tokenmaxxing.reporting import export_payload, usage_stats
+from tokenmaxxing.pricing import ApiValueEstimate, estimate_api_value_rows
+from tokenmaxxing.reporting import ReportWindow, export_payload, usage_stats_rows
 from tokenmaxxing.repository import Repository
 from tokenmaxxing.sync import SourceRoots, SourceSyncResult, sync_sources
 
 _ALL_SOURCES: tuple[Source, ...] = ("codex", "claude", "pi", "opencode")
+_SYNC_MESSAGES = (
+    "Reading your local token trail",
+    "Untangling the agent family tree",
+    "Making sure nothing counted twice",
+    "Persuading the numbers to sit still",
+)
+_SYNC_MESSAGE_INTERVAL = 3.0
 
 
 def _timezone(value: str) -> ZoneInfo:
@@ -25,17 +40,32 @@ def _timezone(value: str) -> ZoneInfo:
         raise argparse.ArgumentTypeError("timezone must be an IANA name") from error
 
 
+def _export_path(value: str) -> Path:
+    path = Path(value)
+    if path.is_dir():
+        return path / "tokenmaxxing-export.json"
+    if path.suffix.lower() != ".json":
+        raise argparse.ArgumentTypeError(
+            "export writes JSON; choose a .json file or an existing directory"
+        )
+    return path
+
+
 def _timezone_from_localtime(path: Path) -> ZoneInfo | None:
     try:
         resolved = path.resolve(strict=True)
     except OSError:
         return None
     _, marker, key = resolved.as_posix().partition("/zoneinfo/")
-    if not marker:
-        return None
+    if marker:
+        try:
+            return ZoneInfo(key)
+        except (ValueError, ZoneInfoNotFoundError):
+            return None
     try:
-        return ZoneInfo(key)
-    except (ValueError, ZoneInfoNotFoundError):
+        with resolved.open("rb") as localtime:
+            return ZoneInfo.from_file(localtime, key="localtime")
+    except (OSError, ValueError, ZoneInfoNotFoundError):
         return None
 
 
@@ -76,16 +106,30 @@ def build_parser() -> argparse.ArgumentParser:
 
     stats = commands.add_parser("stats")
     stats.add_argument(
-        "--group-by", choices=("source", "model", "day"), default="source"
+        "--group-by", choices=("model", "harness", "day"), default="model"
     )
+    stats.add_argument("--period", choices=("7d", "28d", "all"), default="28d")
     timezone_help = "IANA timezone; default is local or an explicit UTC offset"
     stats.add_argument(
         "--timezone", type=_timezone, default=_local_timezone(), help=timezone_help
     )
     stats.add_argument("--json", action="store_true")
 
-    export = commands.add_parser("export")
-    export.add_argument("path", type=Path)
+    export = commands.add_parser(
+        "export",
+        help="write an aggregate JSON snapshot",
+        description="Write a privacy-safe aggregate JSON snapshot.",
+    )
+    export.add_argument(
+        "path",
+        nargs="?",
+        type=_export_path,
+        default="tokenmaxxing-export.json",
+        help=(
+            "JSON file or existing directory "
+            "(default: ./tokenmaxxing-export.json)"
+        ),
+    )
     export.add_argument(
         "--timezone", type=_timezone, default=_local_timezone(), help=timezone_help
     )
@@ -106,85 +150,272 @@ def _sync_payload(results: tuple[SourceSyncResult, ...]) -> dict[str, object]:
     return {"results": [asdict(result) for result in results]}
 
 
-def _stats_payload(group_by: str, stats: tuple[UsageStat, ...]) -> dict[str, object]:
-    return {"group_by": group_by, "stats": [asdict(stat) for stat in stats]}
+def _stats_payload(
+    group_by: str,
+    period: str,
+    stats: tuple[UsageStat, ...],
+    api_equivalent: ApiValueEstimate,
+) -> dict[str, object]:
+    return {
+        "api_equivalent": asdict(api_equivalent),
+        "group_by": group_by,
+        "period": period,
+        "stats": [asdict(stat) for stat in stats],
+    }
 
 
-def _print_stats(stats: tuple[UsageStat, ...]) -> None:
-    headers = (
-        "Group",
-        "Events",
-        "Input",
-        "Output",
-        "Cache R",
-        "Cache W",
-        "Reason",
-        "Total",
-        "Cost",
+def _now(timezone: tzinfo) -> datetime:
+    return datetime.now(timezone)
+
+
+def _compact_tokens(tokens: int) -> str:
+    scales = (
+        (1_000_000_000, "B"),
+        (1_000_000, "M"),
+        (1_000, "K"),
     )
-    rows = [
-        (
-            stat.group,
-            str(stat.event_count),
-            str(stat.input_tokens),
-            str(stat.output_tokens),
-            str(stat.cache_read_tokens),
-            str(stat.cache_write_tokens),
-            str(stat.reasoning_tokens),
-            str(stat.total_tokens),
-            _cost(stat),
+    for index, (threshold, suffix) in enumerate(scales):
+        if tokens >= threshold:
+            scaled = f"{tokens / threshold:.1f}"
+            if scaled == "1000.0" and index:
+                threshold, suffix = scales[index - 1]
+                scaled = f"{tokens / threshold:.1f}"
+            scaled = scaled.rstrip("0").rstrip(".")
+            return f"{scaled}{suffix}"
+    return str(tokens)
+
+
+def _compact_usd(cost_nanos: int) -> str:
+    if cost_nanos == 0:
+        return "$0"
+    dollars = Decimal(cost_nanos) / Decimal(1_000_000_000)
+    if dollars < Decimal("0.01"):
+        return "<$0.01"
+    if dollars < 10:
+        value = dollars.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        return f"${format(value, 'f').rstrip('0').rstrip('.')}"
+    if dollars < 100:
+        value = dollars.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+        return f"${value}"
+    scales = (
+        (Decimal(1_000_000_000), "B"),
+        (Decimal(1_000_000), "M"),
+        (Decimal(1_000), "K"),
+        (Decimal(1), ""),
+    )
+    scale_index = len(scales) - 1
+    threshold, suffix = scales[scale_index]
+    for index, (candidate, candidate_suffix) in enumerate(scales):
+        if dollars >= candidate:
+            scale_index = index
+            threshold = candidate
+            suffix = candidate_suffix
+            break
+    value = (dollars / threshold).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+    if value == 1000 and scale_index:
+        threshold, suffix = scales[scale_index - 1]
+        value = (dollars / threshold).quantize(Decimal("0.1"), rounding=ROUND_HALF_UP)
+    compact = format(value, "f").rstrip("0").rstrip(".")
+    return f"${compact}{suffix}"
+
+
+def _api_value_copy(api_equivalent: ApiValueEstimate) -> str | None:
+    if (
+        api_equivalent.total_tokens
+        and api_equivalent.priced_tokens * 100 < api_equivalent.total_tokens * 95
+    ):
+        return None
+    value = _compact_usd(api_equivalent.cost_nanos)
+    prefix = "" if value.startswith("<") or api_equivalent.cost_nanos == 0 else "≈"
+    return f"API equivalent: {prefix}{value}"
+
+
+def _usage_hint(tokens: int) -> str:
+    if tokens == 0:
+        return "Quiet. Suspiciously human."
+    if tokens < 100_000:
+        return "Just a light snack."
+    if tokens < 1_000_000:
+        return "A tidy little token trail."
+    if tokens < 10_000_000:
+        return "The agents are stretching their legs."
+    if tokens < 100_000_000:
+        return "Your autocomplete has a work ethic."
+    if tokens < 1_000_000_000:
+        return "You may have accidentally hired a small team."
+    if tokens < 10_000_000_000:
+        return "You didn't use AI. You employed a small civilization."
+    return "The tokens have unionized."
+
+
+def _stats_title(group_by: str) -> str:
+    return {"model": "Models", "harness": "Harnesses", "day": "Days"}[group_by]
+
+
+def _period_title(period: str) -> str:
+    return {"7d": "Last 7 days", "28d": "Last 28 days", "all": "All time"}[period]
+
+
+def _period_copy(period: str) -> str:
+    return {"7d": "the last 7 days", "28d": "the last 28 days", "all": "all time"}[period]
+
+
+@contextmanager
+def _rotating_status(
+    console: Console,
+    messages: tuple[str, ...] = _SYNC_MESSAGES,
+    *,
+    interval: float = _SYNC_MESSAGE_INTERVAL,
+) -> Iterator[None]:
+    status = console.status(messages[0], spinner="dots")
+    stop = Event()
+
+    def rotate() -> None:
+        index = 1
+        while not stop.wait(interval):
+            status.update(messages[index % len(messages)])
+            index += 1
+
+    with status:
+        worker = Thread(target=rotate, daemon=True)
+        worker.start()
+        try:
+            yield
+        finally:
+            stop.set()
+            worker.join()
+
+
+def _escape_controls(value: str) -> str:
+    return "".join(
+        f"\\x{ord(character):02x}"
+        if ord(character) < 0x20 or 0x7F <= ord(character) <= 0x9F
+        else character
+        for character in value
+    )
+
+
+def _display_group(group: str, group_by: str) -> str:
+    if group_by == "model" and group == "(unknown)":
+        group = "unknown models"
+    return _escape_controls(group)
+
+
+def _visible_stats(stats: tuple[UsageStat, ...]) -> tuple[UsageStat, ...]:
+    return tuple(
+        sorted(
+            (stat for stat in stats if stat.total_tokens > 0),
+            key=lambda stat: (-stat.total_tokens, stat.group),
         )
-        for stat in stats
-    ]
-    widths = [
-        max([len(header), *(len(row[index]) for row in rows)])
-        for index, header in enumerate(headers)
-    ]
-    print(" ".join(header.ljust(widths[index]) for index, header in enumerate(headers)))
-    for row in rows:
-        print(" ".join(value.ljust(widths[index]) for index, value in enumerate(row)))
+    )
 
 
-def _cost(stat: UsageStat) -> str:
-    if stat.cost_nanos is None or stat.cost_covered_events != stat.event_count:
-        return "unavailable"
-    return f"${stat.cost_nanos / 1_000_000_000:.6f}"
+def _print_stats(
+    stats: tuple[UsageStat, ...],
+    group_by: str,
+    period: str,
+    api_equivalent: ApiValueEstimate,
+) -> None:
+    total_tokens = sum(stat.total_tokens for stat in stats)
+    header = f"{_period_title(period)}: {_compact_tokens(total_tokens)} tokens"
+    hint = _usage_hint(total_tokens)
+    visible_stats = _visible_stats(stats)
+    if not sys.stdout.isatty():
+        print(header)
+        api_value_copy = _api_value_copy(api_equivalent)
+        if api_value_copy is not None:
+            print(api_value_copy)
+        print(hint)
+        if not visible_stats:
+            print(
+                f"No tokens in {_period_copy(period)} yet. Run `tokenmaxxing sync` to bring them in."
+            )
+            return
+        print(_stats_title(group_by))
+        for stat in visible_stats:
+            print(f"{_display_group(stat.group, group_by)}  {_compact_tokens(stat.total_tokens)}")
+        return
+    console = Console(markup=False, highlight=False)
+    console.print(header)
+    api_value_copy = _api_value_copy(api_equivalent)
+    if api_value_copy is not None:
+        console.print(api_value_copy)
+    console.print(hint)
+    if not visible_stats:
+        console.print(
+            f"No tokens in {_period_copy(period)} yet. Run `tokenmaxxing sync` to bring them in."
+        )
+        return
+    table = Table.grid(padding=(0, 2))
+    table.add_column()
+    table.add_column(justify="right")
+    for stat in visible_stats:
+        table.add_row(
+            Text(_display_group(stat.group, group_by)), _compact_tokens(stat.total_tokens)
+        )
+    console.print(_stats_title(group_by))
+    console.print(table)
 
 
 def _sync(arguments: argparse.Namespace) -> int:
     selected = _ALL_SOURCES if arguments.source == "all" else (arguments.source,)
+    console = Console()
+    status = (
+        _rotating_status(console)
+        if console.is_terminal and not arguments.json
+        else nullcontext()
+    )
     database = Database.open(arguments.db)
     try:
-        results = sync_sources(
-            Repository(database),
-            _roots(arguments),
-            selected,
-            raise_errors=arguments.debug,
-        )
+        with status:
+            results = sync_sources(
+                Repository(database),
+                _roots(arguments),
+                selected,
+                raise_errors=arguments.debug,
+            )
     finally:
         database.close()
     if arguments.json:
         print(json.dumps(_sync_payload(results), sort_keys=True))
+        return 1 if any(result.status == "error" for result in results) else 0
     for result in results:
         if result.status == "error":
-            print(f"sync: {result.source}: {result.error_category}", file=sys.stderr)
-        elif not arguments.json:
-            print(f"{result.source}: {result.status}")
+            Console(stderr=True).print(
+                f"{result.source}: error ({result.error_category})"
+            )
+        elif result.status == "ok":
+            console.print(f"{result.source}: synced")
+        else:
+            console.print(f"{result.source}: skipped")
+    console.print("Try `tokenmaxxing stats` to see your model leaderboard.")
     return 1 if any(result.status == "error" for result in results) else 0
 
 
 def _stats(arguments: argparse.Namespace) -> int:
+    reporting_group = "source" if arguments.group_by == "harness" else arguments.group_by
+    window = ReportWindow.from_period(
+        arguments.period, arguments.timezone, _now(arguments.timezone)
+    )
     database = Database.open(arguments.db)
     try:
-        stats = usage_stats(
-            Repository(database), arguments.group_by, arguments.timezone
-        )
+        repository = Repository(database)
+        rows = [row for row in repository.reporting_rows() if window.includes(row)]
+        stats = usage_stats_rows(rows, reporting_group, arguments.timezone)
+        api_equivalent = estimate_api_value_rows(rows)
     finally:
         database.close()
     if arguments.json:
-        print(json.dumps(_stats_payload(arguments.group_by, stats), sort_keys=True))
+        print(
+            json.dumps(
+                _stats_payload(
+                    arguments.group_by, arguments.period, stats, api_equivalent
+                ),
+                sort_keys=True,
+            )
+        )
     else:
-        _print_stats(stats)
+        _print_stats(stats, arguments.group_by, arguments.period, api_equivalent)
     return 0
 
 
@@ -199,6 +430,7 @@ def _export(arguments: argparse.Namespace) -> int:
     arguments.path.write_text(
         json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8"
     )
+    print(f"Exported aggregate JSON → {_escape_controls(str(arguments.path))}")
     return 0
 
 

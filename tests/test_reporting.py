@@ -6,16 +6,19 @@ from tokenmaxxing.models import (
     CountingStatus,
     CostUsage,
     Projection,
+    ReportingRow,
     RunDraft,
     SessionDraft,
     TokenUsage,
     UsageEventDraft,
 )
-from tokenmaxxing.reporting import export_payload, usage_stats
+from tokenmaxxing import reporting
+from tokenmaxxing.reporting import event_total, export_payload, usage_stats
 from tokenmaxxing.repository import Repository
 
 
 KOLKATA = ZoneInfo("Asia/Kolkata")
+NEW_YORK = ZoneInfo("America/New_York")
 
 
 def _event(
@@ -29,6 +32,10 @@ def _event(
     session_id: int | None = None,
     run_id: int | None = None,
     started_at_ns: int | None = None,
+    provider: str | None = None,
+    service_tier: str | None = None,
+    speed: str | None = None,
+    inference_region: str | None = None,
 ) -> UsageEventDraft:
     return UsageEventDraft(
         source="claude",
@@ -42,7 +49,75 @@ def _event(
         session_id=session_id,
         run_id=run_id,
         started_at_ns=started_at_ns,
+        provider=provider,
+        service_tier=service_tier,
+        speed=speed,
+        inference_region=inference_region,
     )
+
+
+def test_reporting_rows_expose_cost_estimation_metadata_with_event_precedence(
+    repository: Repository,
+    database: Database,
+) -> None:
+    repository.apply_projection(
+        Projection(
+            sessions=(
+                SessionDraft(
+                    source="claude",
+                    source_session_id="pricing-session",
+                    provider="session-provider",
+                    current_model="session-model",
+                    service_tier="session-tier",
+                ),
+            ),
+            runs=(
+                RunDraft(
+                    source="claude",
+                    source_session_id="pricing-session",
+                    source_run_id="pricing-run",
+                    provider="run-provider",
+                    model="run-model",
+                ),
+            ),
+        )
+    )
+    run_id = database.connection.execute(
+        "SELECT id FROM runs WHERE source_run_id = 'pricing-run'"
+    ).fetchone()[0]
+    repository.apply_projection(
+        Projection(
+            events=(
+                _event(
+                    "pricing-event",
+                    run_id=run_id,
+                    provider="event-provider",
+                    response_model="event-model",
+                    service_tier="event-tier",
+                    speed="fast",
+                    inference_region="eu",
+                    tokens=TokenUsage(
+                        input=10,
+                        cache_write=7,
+                        cache_write_5m=5,
+                        cache_write_1h=2,
+                    ),
+                ),
+            )
+        )
+    )
+
+    (row,) = repository.reporting_rows()
+
+    assert row.provider == "event-provider"
+    assert row.granularity == "model_call"
+    assert row.resolved_model == "event-model"
+    assert row.requested_model == "run-model"
+    assert row.cache_write_5m_tokens == 5
+    assert row.cache_write_1h_tokens == 2
+    assert row.service_tier == "event-tier"
+    assert row.speed == "fast"
+    assert row.inference_region == "eu"
 
 
 def test_source_stats_count_counted_events_and_prefer_reported_totals(
@@ -92,6 +167,51 @@ def test_source_stats_count_counted_events_and_prefer_reported_totals(
         )
     )
 
+    assert repository.reporting_rows() == [
+        ReportingRow(
+            source="claude",
+            granularity="model_call",
+            provider=None,
+            resolved_model="fallback-model",
+            requested_model="fallback-model",
+            occurred_at_ns=None,
+            input_tokens=1,
+            output_tokens=4,
+            cache_read_tokens=1,
+            cache_write_tokens=2,
+            cache_write_5m_tokens=None,
+            cache_write_1h_tokens=None,
+            reasoning_tokens=1,
+            reported_total_tokens=None,
+            derived_total_tokens=None,
+            total_cost_nanos=None,
+            service_tier=None,
+            speed=None,
+            inference_region=None,
+        ),
+        ReportingRow(
+            source="claude",
+            granularity="model_call",
+            provider=None,
+            resolved_model="response-model",
+            requested_model=None,
+            occurred_at_ns=None,
+            input_tokens=9,
+            output_tokens=7,
+            cache_read_tokens=2,
+            cache_write_tokens=1,
+            cache_write_5m_tokens=None,
+            cache_write_1h_tokens=None,
+            reasoning_tokens=3,
+            reported_total_tokens=17,
+            derived_total_tokens=None,
+            total_cost_nanos=200,
+            service_tier=None,
+            speed=None,
+            inference_region=None,
+        ),
+    ]
+
     (source_stat,) = usage_stats(repository, "source", KOLKATA)
 
     assert source_stat.group == "claude"
@@ -100,6 +220,32 @@ def test_source_stats_count_counted_events_and_prefer_reported_totals(
     assert source_stat.reasoning_tokens == 4
     assert source_stat.cost_covered_events == 1
     assert source_stat.cost_nanos == 200
+
+
+def test_codex_component_total_does_not_add_cached_input_twice() -> None:
+    row = ReportingRow(
+        source="codex",
+        granularity="counter_delta",
+        provider="openai",
+        resolved_model="gpt-5.6-sol",
+        requested_model="gpt-5.6-sol",
+        occurred_at_ns=None,
+        input_tokens=100,
+        output_tokens=10,
+        cache_read_tokens=40,
+        cache_write_tokens=3,
+        cache_write_5m_tokens=None,
+        cache_write_1h_tokens=None,
+        reasoning_tokens=8,
+        reported_total_tokens=None,
+        derived_total_tokens=None,
+        total_cost_nanos=None,
+        service_tier=None,
+        speed=None,
+        inference_region=None,
+    )
+
+    assert event_total(row) == 113
 
 
 def test_model_stats_prefer_response_model_and_label_unknown_models(
@@ -227,6 +373,134 @@ def test_day_stats_use_event_then_run_then_session_timestamp_in_requested_timezo
         ("2025-08-31", 2, 4),
         ("2025-09-01", 1, 2),
     ]
+
+
+def test_report_windows_filter_on_half_open_local_day_boundaries(
+    repository: Repository,
+) -> None:
+    repository.apply_projection(
+        Projection(
+            events=(
+                _event(
+                    "before-seven-days",
+                    model="before-seven-days",
+                    started_at_ns=1_779_474_599_000_000_000,
+                    tokens=TokenUsage(input=1),
+                ),
+                _event(
+                    "first-seven-day",
+                    model="first-seven-day",
+                    started_at_ns=1_779_474_600_000_000_000,
+                    tokens=TokenUsage(input=2),
+                ),
+                _event(
+                    "last-seven-day",
+                    model="last-seven-day",
+                    started_at_ns=1_780_079_399_000_000_000,
+                    tokens=TokenUsage(input=3),
+                ),
+                _event(
+                    "after-seven-days",
+                    model="after-seven-days",
+                    started_at_ns=1_780_079_400_000_000_000,
+                    tokens=TokenUsage(input=4),
+                ),
+                _event(
+                    "before-twenty-eight-days",
+                    model="before-twenty-eight-days",
+                    started_at_ns=1_777_660_199_000_000_000,
+                    tokens=TokenUsage(input=5),
+                ),
+                _event(
+                    "first-twenty-eight-day",
+                    model="first-twenty-eight-day",
+                    started_at_ns=1_777_660_200_000_000_000,
+                    tokens=TokenUsage(input=6),
+                ),
+                _event("unknown-time", model="unknown-time", tokens=TokenUsage(input=6)),
+            )
+        )
+    )
+    now = datetime(2026, 5, 29, 10, tzinfo=UTC)
+
+    seven_days = usage_stats(
+        repository,
+        "model",
+        KOLKATA,
+        window=reporting.ReportWindow.from_period("7d", KOLKATA, now),
+    )
+    twenty_eight_days = usage_stats(
+        repository,
+        "model",
+        KOLKATA,
+        window=reporting.ReportWindow.from_period("28d", KOLKATA, now),
+    )
+    all_time = usage_stats(
+        repository,
+        "model",
+        KOLKATA,
+        window=reporting.ReportWindow.from_period("all", KOLKATA, now),
+    )
+
+    assert [(stat.group, stat.total_tokens) for stat in seven_days] == [
+        ("first-seven-day", 2),
+        ("last-seven-day", 3),
+    ]
+    assert [(stat.group, stat.total_tokens) for stat in twenty_eight_days] == [
+        ("before-seven-days", 1),
+        ("first-seven-day", 2),
+        ("first-twenty-eight-day", 6),
+        ("last-seven-day", 3),
+    ]
+    assert [(stat.group, stat.total_tokens) for stat in all_time] == [
+        ("after-seven-days", 4),
+        ("before-seven-days", 1),
+        ("before-twenty-eight-days", 5),
+        ("first-seven-day", 2),
+        ("first-twenty-eight-day", 6),
+        ("last-seven-day", 3),
+        ("unknown-time", 6),
+    ]
+
+
+def _reporting_row(occurred_at_ns: int) -> ReportingRow:
+    return ReportingRow(
+        source="claude",
+        granularity="model_call",
+        provider=None,
+        resolved_model="model",
+        requested_model="model",
+        occurred_at_ns=occurred_at_ns,
+        input_tokens=None,
+        output_tokens=None,
+        cache_read_tokens=None,
+        cache_write_tokens=None,
+        cache_write_5m_tokens=None,
+        cache_write_1h_tokens=None,
+        reasoning_tokens=None,
+        reported_total_tokens=None,
+        derived_total_tokens=None,
+        total_cost_nanos=None,
+        service_tier=None,
+        speed=None,
+        inference_region=None,
+    )
+
+
+def test_report_windows_follow_new_york_dst_day_boundaries() -> None:
+    for now, expected_hours in (
+        (datetime(2026, 3, 14, 12, tzinfo=UTC), 167),
+        (datetime(2026, 11, 7, 12, tzinfo=UTC), 169),
+    ):
+        window = reporting.ReportWindow.from_period("7d", NEW_YORK, now)
+
+        assert window.end_ns is not None
+        assert window.start_ns is not None
+        assert window.end_ns - window.start_ns == expected_hours * 3_600_000_000_000
+        assert window.includes(_reporting_row(window.start_ns))
+        assert window.includes(_reporting_row(window.end_ns - 1))
+        assert not window.includes(_reporting_row(window.start_ns - 1))
+        assert not window.includes(_reporting_row(window.end_ns))
 
 
 def test_export_contains_only_aggregate_allowlisted_keys_recursively(

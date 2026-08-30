@@ -112,6 +112,29 @@ class CostUsage:
 
 
 @dataclass(frozen=True, slots=True)
+class ReportingRow:
+    source: Source
+    granularity: Granularity
+    provider: str | None
+    resolved_model: str
+    requested_model: str | None
+    occurred_at_ns: int | None
+    input_tokens: int | None
+    output_tokens: int | None
+    cache_read_tokens: int | None
+    cache_write_tokens: int | None
+    cache_write_5m_tokens: int | None
+    cache_write_1h_tokens: int | None
+    reasoning_tokens: int | None
+    reported_total_tokens: int | None
+    derived_total_tokens: int | None
+    total_cost_nanos: int | None
+    service_tier: str | None
+    speed: str | None
+    inference_region: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class ObservationDraft:
     source: Source
     channel: Channel

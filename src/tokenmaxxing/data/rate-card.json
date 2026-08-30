@@ -1,0 +1,1425 @@
+{
+  "schema_version": 1,
+  "currency": "USD",
+  "unit_tokens": 1000000,
+  "provider_aliases": {
+    "anthropic": [
+      "claude"
+    ],
+    "dashscope": [
+      "alibaba",
+      "aliyun",
+      "qwen"
+    ],
+    "deepseek": [],
+    "google": [
+      "google-generative-ai"
+    ],
+    "kimi": [
+      "moonshot",
+      "moonshotai"
+    ],
+    "mistral": [],
+    "openai": [
+      "openai-codex"
+    ],
+    "xai": [
+      "x.ai"
+    ],
+    "zai": [
+      "z.ai",
+      "zhipu",
+      "zhipuai"
+    ]
+  },
+  "models": [
+    {
+      "provider": "openai",
+      "model": "gpt-5.6-sol",
+      "aliases": [
+        "gpt-5.6"
+      ],
+      "pricing_url": "https://platform.openai.com/docs/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2026-07-09T00:00:00Z",
+          "effective_until": "2026-08-21T00:00:00Z",
+          "input": "5",
+          "cached_input": "0.5",
+          "cache_write": "6.25",
+          "output": "30",
+          "long_context": {
+            "above_input_tokens": 272000,
+            "input": "10",
+            "cached_input": "1",
+            "cache_write": "12.5",
+            "output": "45"
+          },
+          "tier_multipliers": {
+            "batch": "0.5",
+            "fast": "2",
+            "flex": "0.5",
+            "priority": "2"
+          },
+          "region_multipliers": {
+            "eu": "1.1",
+            "regional": "1.1",
+            "us": "1.1"
+          }
+        },
+        {
+          "effective_from": "2026-08-21T00:00:00Z",
+          "input": "4",
+          "cached_input": "0.4",
+          "cache_write": "5",
+          "output": "20",
+          "long_context": {
+            "above_input_tokens": 272000,
+            "input": "8",
+            "cached_input": "0.8",
+            "cache_write": "10",
+            "output": "30"
+          },
+          "tier_multipliers": {
+            "batch": "0.5",
+            "fast": "2",
+            "flex": "0.5",
+            "priority": "2"
+          },
+          "region_multipliers": {
+            "eu": "1.1",
+            "regional": "1.1",
+            "us": "1.1"
+          }
+        }
+      ]
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-5.6-terra",
+      "aliases": [],
+      "pricing_url": "https://platform.openai.com/docs/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2026-07-09T00:00:00Z",
+          "effective_until": "2026-07-30T00:00:00Z",
+          "input": "2.5",
+          "cached_input": "0.25",
+          "cache_write": "3.125",
+          "output": "15",
+          "long_context": {
+            "above_input_tokens": 272000,
+            "input": "5",
+            "cached_input": "0.5",
+            "cache_write": "6.25",
+            "output": "22.5"
+          },
+          "tier_multipliers": {
+            "batch": "0.5",
+            "fast": "2",
+            "flex": "0.5",
+            "priority": "2"
+          },
+          "region_multipliers": {
+            "eu": "1.1",
+            "regional": "1.1",
+            "us": "1.1"
+          }
+        },
+        {
+          "effective_from": "2026-07-30T00:00:00Z",
+          "input": "2",
+          "cached_input": "0.2",
+          "cache_write": "2.5",
+          "output": "12",
+          "long_context": {
+            "above_input_tokens": 272000,
+            "input": "4",
+            "cached_input": "0.4",
+            "cache_write": "5",
+            "output": "18"
+          },
+          "tier_multipliers": {
+            "batch": "0.5",
+            "fast": "2",
+            "flex": "0.5",
+            "priority": "2"
+          },
+          "region_multipliers": {
+            "eu": "1.1",
+            "regional": "1.1",
+            "us": "1.1"
+          }
+        }
+      ]
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-5.6-luna",
+      "aliases": [],
+      "pricing_url": "https://platform.openai.com/docs/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2026-07-09T00:00:00Z",
+          "effective_until": "2026-07-30T00:00:00Z",
+          "input": "1",
+          "cached_input": "0.1",
+          "cache_write": "1.25",
+          "output": "6",
+          "long_context": {
+            "above_input_tokens": 272000,
+            "input": "2",
+            "cached_input": "0.2",
+            "cache_write": "2.5",
+            "output": "9"
+          },
+          "tier_multipliers": {
+            "batch": "0.5",
+            "fast": "2",
+            "flex": "0.5",
+            "priority": "2"
+          },
+          "region_multipliers": {
+            "eu": "1.1",
+            "regional": "1.1",
+            "us": "1.1"
+          }
+        },
+        {
+          "effective_from": "2026-07-30T00:00:00Z",
+          "input": "0.2",
+          "cached_input": "0.02",
+          "cache_write": "0.25",
+          "output": "1.2",
+          "long_context": {
+            "above_input_tokens": 272000,
+            "input": "0.4",
+            "cached_input": "0.04",
+            "cache_write": "0.5",
+            "output": "1.8"
+          },
+          "tier_multipliers": {
+            "batch": "0.5",
+            "fast": "2",
+            "flex": "0.5",
+            "priority": "2"
+          },
+          "region_multipliers": {
+            "eu": "1.1",
+            "regional": "1.1",
+            "us": "1.1"
+          }
+        }
+      ]
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-5.5",
+      "aliases": [],
+      "pricing_url": "https://platform.openai.com/docs/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2026-01-01T00:00:00Z",
+          "input": "5",
+          "cached_input": "0.5",
+          "output": "30",
+          "long_context": {
+            "above_input_tokens": 272000,
+            "input": "10",
+            "cached_input": "1",
+            "output": "45"
+          },
+          "tier_multipliers": {
+            "batch": "0.5",
+            "fast": "2",
+            "flex": "0.5",
+            "priority": "2"
+          }
+        }
+      ]
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-5.4",
+      "aliases": [
+        "codex-auto-review"
+      ],
+      "pricing_url": "https://platform.openai.com/docs/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2026-01-01T00:00:00Z",
+          "input": "2.5",
+          "cached_input": "0.25",
+          "output": "15",
+          "long_context": {
+            "above_input_tokens": 272000,
+            "input": "5",
+            "cached_input": "0.5",
+            "output": "22.5"
+          },
+          "tier_multipliers": {
+            "batch": "0.5",
+            "fast": "2",
+            "flex": "0.5",
+            "priority": "2"
+          }
+        }
+      ]
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-5.4-mini",
+      "aliases": [],
+      "pricing_url": "https://platform.openai.com/docs/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2026-01-01T00:00:00Z",
+          "input": "0.75",
+          "cached_input": "0.075",
+          "output": "4.5",
+          "tier_multipliers": {
+            "batch": "0.5",
+            "flex": "0.5"
+          }
+        }
+      ]
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-5.3-codex",
+      "aliases": [
+        "codex-code-review"
+      ],
+      "pricing_url": "https://platform.openai.com/docs/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2025-01-01T00:00:00Z",
+          "input": "1.75",
+          "cached_input": "0.175",
+          "output": "14"
+        }
+      ]
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-5.2",
+      "aliases": [],
+      "pricing_url": "https://platform.openai.com/docs/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2025-01-01T00:00:00Z",
+          "input": "1.75",
+          "cached_input": "0.175",
+          "output": "14"
+        }
+      ]
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-5",
+      "aliases": [],
+      "pricing_url": "https://platform.openai.com/docs/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2025-01-01T00:00:00Z",
+          "input": "1.25",
+          "cached_input": "0.125",
+          "output": "10"
+        }
+      ]
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-5-mini",
+      "aliases": [],
+      "pricing_url": "https://platform.openai.com/docs/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2025-01-01T00:00:00Z",
+          "input": "0.25",
+          "cached_input": "0.025",
+          "output": "2"
+        }
+      ]
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-4.1",
+      "aliases": [],
+      "pricing_url": "https://platform.openai.com/docs/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2025-01-01T00:00:00Z",
+          "input": "2",
+          "cached_input": "0.5",
+          "output": "8"
+        }
+      ]
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-4.1-mini",
+      "aliases": [],
+      "pricing_url": "https://platform.openai.com/docs/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2025-01-01T00:00:00Z",
+          "input": "0.4",
+          "cached_input": "0.1",
+          "output": "1.6"
+        }
+      ]
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-4.1-nano",
+      "aliases": [],
+      "pricing_url": "https://platform.openai.com/docs/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2025-01-01T00:00:00Z",
+          "input": "0.1",
+          "cached_input": "0.025",
+          "output": "0.4"
+        }
+      ]
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-4o",
+      "aliases": [],
+      "pricing_url": "https://platform.openai.com/docs/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2024-01-01T00:00:00Z",
+          "input": "2.5",
+          "cached_input": "1.25",
+          "output": "10"
+        }
+      ]
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "aliases": [],
+      "pricing_url": "https://platform.openai.com/docs/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2024-01-01T00:00:00Z",
+          "input": "0.15",
+          "cached_input": "0.075",
+          "output": "0.6"
+        }
+      ]
+    },
+    {
+      "provider": "openai",
+      "model": "o3",
+      "aliases": [],
+      "pricing_url": "https://platform.openai.com/docs/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2025-01-01T00:00:00Z",
+          "input": "2",
+          "cached_input": "0.5",
+          "output": "8"
+        }
+      ]
+    },
+    {
+      "provider": "openai",
+      "model": "o4-mini",
+      "aliases": [],
+      "pricing_url": "https://platform.openai.com/docs/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2025-01-01T00:00:00Z",
+          "input": "1.1",
+          "cached_input": "0.275",
+          "output": "4.4"
+        }
+      ]
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-fable-5",
+      "aliases": [
+        "claude-mythos-5"
+      ],
+      "pricing_url": "https://platform.claude.com/docs/en/about-claude/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2026-01-01T00:00:00Z",
+          "input": "10",
+          "cached_input": "1",
+          "cache_write": "12.5",
+          "cache_write_5m": "12.5",
+          "cache_write_1h": "20",
+          "output": "50",
+          "tier_multipliers": {
+            "batch": "0.5"
+          },
+          "region_multipliers": {
+            "us": "1.1"
+          }
+        }
+      ]
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-opus-5",
+      "aliases": [
+        "claude-opus-4-8",
+        "claude-opus-4-7",
+        "claude-opus-4-6",
+        "claude-opus-4-5"
+      ],
+      "pricing_url": "https://platform.claude.com/docs/en/about-claude/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2025-01-01T00:00:00Z",
+          "input": "5",
+          "cached_input": "0.5",
+          "cache_write": "6.25",
+          "cache_write_5m": "6.25",
+          "cache_write_1h": "10",
+          "output": "25",
+          "tier_multipliers": {
+            "batch": "0.5",
+            "fast": "2"
+          },
+          "region_multipliers": {
+            "us": "1.1"
+          }
+        }
+      ]
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-sonnet-5",
+      "aliases": [],
+      "pricing_url": "https://platform.claude.com/docs/en/about-claude/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2026-06-30T00:00:00Z",
+          "input": "2",
+          "cached_input": "0.2",
+          "cache_write": "2.5",
+          "cache_write_5m": "2.5",
+          "cache_write_1h": "4",
+          "output": "10",
+          "tier_multipliers": {
+            "batch": "0.5"
+          },
+          "region_multipliers": {
+            "us": "1.1"
+          }
+        }
+      ]
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "aliases": [
+        "claude-sonnet-4-5"
+      ],
+      "pricing_url": "https://platform.claude.com/docs/en/about-claude/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2025-01-01T00:00:00Z",
+          "input": "3",
+          "cached_input": "0.3",
+          "cache_write": "3.75",
+          "cache_write_5m": "3.75",
+          "cache_write_1h": "6",
+          "output": "15",
+          "tier_multipliers": {
+            "batch": "0.5"
+          },
+          "region_multipliers": {
+            "us": "1.1"
+          }
+        }
+      ]
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-haiku-4-5",
+      "aliases": [],
+      "pricing_url": "https://platform.claude.com/docs/en/about-claude/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2025-01-01T00:00:00Z",
+          "input": "1",
+          "cached_input": "0.1",
+          "cache_write": "1.25",
+          "cache_write_5m": "1.25",
+          "cache_write_1h": "2",
+          "output": "5",
+          "tier_multipliers": {
+            "batch": "0.5"
+          }
+        }
+      ]
+    },
+    {
+      "provider": "google",
+      "model": "gemini-3.7-flash",
+      "aliases": [],
+      "pricing_url": "https://ai.google.dev/gemini-api/docs/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2026-01-01T00:00:00Z",
+          "effective_until": "2027-01-01T00:00:00Z",
+          "input": "0.75",
+          "cached_input": "0.075",
+          "output": "3.75",
+          "tier_multipliers": {
+            "batch": "0.5",
+            "flex": "0.5",
+            "priority": "1.8"
+          }
+        },
+        {
+          "effective_from": "2027-01-01T00:00:00Z",
+          "input": "1.5",
+          "cached_input": "0.15",
+          "output": "7.5",
+          "tier_multipliers": {
+            "batch": "0.5",
+            "flex": "0.5",
+            "priority": "1.8"
+          }
+        }
+      ]
+    },
+    {
+      "provider": "google",
+      "model": "gemini-3.6-flash",
+      "aliases": [],
+      "pricing_url": "https://ai.google.dev/gemini-api/docs/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2026-01-01T00:00:00Z",
+          "effective_until": "2027-01-01T00:00:00Z",
+          "input": "0.75",
+          "cached_input": "0.075",
+          "output": "3.75",
+          "tier_multipliers": {
+            "batch": "0.5",
+            "flex": "0.5",
+            "priority": "1.8"
+          }
+        },
+        {
+          "effective_from": "2027-01-01T00:00:00Z",
+          "input": "1.5",
+          "cached_input": "0.15",
+          "output": "7.5",
+          "tier_multipliers": {
+            "batch": "0.5",
+            "flex": "0.5",
+            "priority": "1.8"
+          }
+        }
+      ]
+    },
+    {
+      "provider": "google",
+      "model": "gemini-3.5-flash",
+      "aliases": [],
+      "pricing_url": "https://ai.google.dev/gemini-api/docs/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2026-01-01T00:00:00Z",
+          "input": "1.5",
+          "cached_input": "0.15",
+          "output": "9",
+          "tier_multipliers": {
+            "batch": "0.5",
+            "flex": "0.5",
+            "priority": "1.8"
+          }
+        }
+      ]
+    },
+    {
+      "provider": "google",
+      "model": "gemini-3.5-flash-lite",
+      "aliases": [],
+      "pricing_url": "https://ai.google.dev/gemini-api/docs/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2026-01-01T00:00:00Z",
+          "input": "0.3",
+          "cached_input": "0.03",
+          "output": "2.5",
+          "tier_multipliers": {
+            "batch": "0.5",
+            "flex": "0.5",
+            "priority": "1.8"
+          }
+        }
+      ]
+    },
+    {
+      "provider": "google",
+      "model": "gemini-3.1-pro-preview",
+      "aliases": [],
+      "pricing_url": "https://ai.google.dev/gemini-api/docs/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2026-01-01T00:00:00Z",
+          "input": "2",
+          "cached_input": "0.2",
+          "output": "12",
+          "long_context": {
+            "above_input_tokens": 200000,
+            "input": "4",
+            "cached_input": "0.4",
+            "output": "18"
+          },
+          "tier_multipliers": {
+            "batch": "0.5",
+            "flex": "0.5",
+            "priority": "1.8"
+          }
+        }
+      ]
+    },
+    {
+      "provider": "google",
+      "model": "gemini-3.1-flash-lite",
+      "aliases": [],
+      "pricing_url": "https://ai.google.dev/gemini-api/docs/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2026-01-01T00:00:00Z",
+          "input": "0.25",
+          "cached_input": "0.025",
+          "output": "1.5",
+          "tier_multipliers": {
+            "batch": "0.5",
+            "flex": "0.5"
+          }
+        }
+      ]
+    },
+    {
+      "provider": "google",
+      "model": "gemini-2.5-pro",
+      "aliases": [],
+      "pricing_url": "https://ai.google.dev/gemini-api/docs/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2025-01-01T00:00:00Z",
+          "input": "1.25",
+          "cached_input": "0.125",
+          "output": "10",
+          "long_context": {
+            "above_input_tokens": 200000,
+            "input": "2.5",
+            "cached_input": "0.25",
+            "output": "15"
+          },
+          "tier_multipliers": {
+            "batch": "0.5"
+          }
+        }
+      ]
+    },
+    {
+      "provider": "google",
+      "model": "gemini-2.5-flash",
+      "aliases": [],
+      "pricing_url": "https://ai.google.dev/gemini-api/docs/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2025-01-01T00:00:00Z",
+          "input": "0.3",
+          "cached_input": "0.03",
+          "output": "2.5",
+          "tier_multipliers": {
+            "batch": "0.5"
+          }
+        }
+      ]
+    },
+    {
+      "provider": "google",
+      "model": "gemini-2.5-flash-lite",
+      "aliases": [],
+      "pricing_url": "https://ai.google.dev/gemini-api/docs/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2025-01-01T00:00:00Z",
+          "input": "0.1",
+          "cached_input": "0.01",
+          "output": "0.4",
+          "tier_multipliers": {
+            "batch": "0.5"
+          }
+        }
+      ]
+    },
+    {
+      "provider": "deepseek",
+      "model": "deepseek-v4-flash",
+      "aliases": [],
+      "pricing_url": "https://api-docs.deepseek.com/quick_start/pricing/",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2026-08-16T16:00:00Z",
+          "input": "0.22",
+          "cached_input": "0.007",
+          "output": "0.66",
+          "time_multipliers": [
+            {
+              "weekdays": [
+                0,
+                1,
+                2,
+                3,
+                4
+              ],
+              "start_hour_utc": 1,
+              "end_hour_utc": 4,
+              "multiplier": "2"
+            },
+            {
+              "weekdays": [
+                0,
+                1,
+                2,
+                3,
+                4
+              ],
+              "start_hour_utc": 6,
+              "end_hour_utc": 10,
+              "multiplier": "2"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "deepseek",
+      "model": "deepseek-v4-pro",
+      "aliases": [],
+      "pricing_url": "https://api-docs.deepseek.com/quick_start/pricing/",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2026-08-16T16:00:00Z",
+          "input": "0.66",
+          "cached_input": "0.022",
+          "output": "1.98",
+          "time_multipliers": [
+            {
+              "weekdays": [
+                0,
+                1,
+                2,
+                3,
+                4
+              ],
+              "start_hour_utc": 1,
+              "end_hour_utc": 4,
+              "multiplier": "2"
+            },
+            {
+              "weekdays": [
+                0,
+                1,
+                2,
+                3,
+                4
+              ],
+              "start_hour_utc": 6,
+              "end_hour_utc": 10,
+              "multiplier": "2"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "provider": "zai",
+      "model": "glm-5.3-flash",
+      "aliases": [],
+      "pricing_url": "https://docs.z.ai/guides/overview/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2026-08-01T00:00:00Z",
+          "effective_until": "2026-09-09T16:00:00Z",
+          "input": "0.075",
+          "cached_input": "0.015",
+          "cache_write": "0",
+          "output": "0.25"
+        },
+        {
+          "effective_from": "2026-09-09T16:00:00Z",
+          "input": "0.15",
+          "cached_input": "0.03",
+          "output": "0.5"
+        }
+      ]
+    },
+    {
+      "provider": "zai",
+      "model": "glm-5.3",
+      "aliases": [],
+      "pricing_url": "https://docs.z.ai/guides/overview/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2026-01-01T00:00:00Z",
+          "input": "1.4",
+          "cached_input": "0.26",
+          "cache_write": "0",
+          "output": "4.4"
+        }
+      ]
+    },
+    {
+      "provider": "zai",
+      "model": "glm-5.2",
+      "aliases": [],
+      "pricing_url": "https://docs.z.ai/guides/overview/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2026-01-01T00:00:00Z",
+          "input": "1.4",
+          "cached_input": "0.26",
+          "cache_write": "0",
+          "output": "4.4"
+        }
+      ]
+    },
+    {
+      "provider": "zai",
+      "model": "glm-5.1",
+      "aliases": [],
+      "pricing_url": "https://docs.z.ai/guides/overview/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2026-01-01T00:00:00Z",
+          "input": "1.4",
+          "cached_input": "0.26",
+          "cache_write": "0",
+          "output": "4.4"
+        }
+      ]
+    },
+    {
+      "provider": "zai",
+      "model": "glm-5",
+      "aliases": [],
+      "pricing_url": "https://docs.z.ai/guides/overview/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2026-01-01T00:00:00Z",
+          "input": "1",
+          "cached_input": "0.2",
+          "cache_write": "0",
+          "output": "3.2"
+        }
+      ]
+    },
+    {
+      "provider": "zai",
+      "model": "glm-4.7",
+      "aliases": [],
+      "pricing_url": "https://docs.z.ai/guides/overview/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2025-01-01T00:00:00Z",
+          "input": "0.6",
+          "cached_input": "0.11",
+          "cache_write": "0",
+          "output": "2.2"
+        }
+      ]
+    },
+    {
+      "provider": "zai",
+      "model": "glm-4.7-flashx",
+      "aliases": [],
+      "pricing_url": "https://docs.z.ai/guides/overview/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2025-01-01T00:00:00Z",
+          "input": "0.07",
+          "cached_input": "0.01",
+          "cache_write": "0",
+          "output": "0.4"
+        }
+      ]
+    },
+    {
+      "provider": "zai",
+      "model": "glm-4.6",
+      "aliases": [
+        "glm-4.5"
+      ],
+      "pricing_url": "https://docs.z.ai/guides/overview/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2025-01-01T00:00:00Z",
+          "input": "0.6",
+          "cached_input": "0.11",
+          "cache_write": "0",
+          "output": "2.2"
+        }
+      ]
+    },
+    {
+      "provider": "zai",
+      "model": "glm-4.5-air",
+      "aliases": [],
+      "pricing_url": "https://docs.z.ai/guides/overview/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2025-01-01T00:00:00Z",
+          "input": "0.2",
+          "cached_input": "0.03",
+          "cache_write": "0",
+          "output": "1.1"
+        }
+      ]
+    },
+    {
+      "provider": "kimi",
+      "model": "kimi-k3",
+      "aliases": [],
+      "pricing_url": "https://platform.kimi.ai/docs/pricing/chat-k3",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2026-01-01T00:00:00Z",
+          "input": "3",
+          "cached_input": "0.3",
+          "cache_write": "0",
+          "output": "15"
+        }
+      ]
+    },
+    {
+      "provider": "kimi",
+      "model": "kimi-k2.7-code",
+      "aliases": [],
+      "pricing_url": "https://platform.kimi.ai/docs/pricing/chat-k27-code",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2026-01-01T00:00:00Z",
+          "input": "0.95",
+          "cached_input": "0.19",
+          "cache_write": "0",
+          "output": "4"
+        }
+      ]
+    },
+    {
+      "provider": "kimi",
+      "model": "kimi-k2.7-code-highspeed",
+      "aliases": [],
+      "pricing_url": "https://platform.kimi.ai/docs/pricing/chat-k27-code",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2026-01-01T00:00:00Z",
+          "input": "1.9",
+          "cached_input": "0.38",
+          "cache_write": "0",
+          "output": "8"
+        }
+      ]
+    },
+    {
+      "provider": "kimi",
+      "model": "kimi-k2.6",
+      "aliases": [],
+      "pricing_url": "https://platform.kimi.ai/docs/pricing/chat-k26",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2026-01-01T00:00:00Z",
+          "input": "0.95",
+          "cached_input": "0.16",
+          "cache_write": "0",
+          "output": "4"
+        }
+      ]
+    },
+    {
+      "provider": "kimi",
+      "model": "kimi-k2.5",
+      "aliases": [],
+      "pricing_url": "https://platform.kimi.ai/docs/pricing/chat-k25",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2025-01-01T00:00:00Z",
+          "input": "0.6",
+          "cached_input": "0.1",
+          "cache_write": "0",
+          "output": "3"
+        }
+      ]
+    },
+    {
+      "provider": "xai",
+      "model": "grok-4.6",
+      "aliases": [],
+      "pricing_url": "https://docs.x.ai/developers/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2026-01-01T00:00:00Z",
+          "input": "2",
+          "cached_input": "0.5",
+          "output": "6",
+          "long_context": {
+            "above_input_tokens": 200000,
+            "inclusive": true,
+            "input": "4",
+            "cached_input": "1",
+            "output": "12"
+          }
+        }
+      ]
+    },
+    {
+      "provider": "xai",
+      "model": "grok-4.5",
+      "aliases": [
+        "grok-4.5-latest",
+        "grok-build-latest"
+      ],
+      "pricing_url": "https://docs.x.ai/developers/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2026-01-01T00:00:00Z",
+          "input": "2",
+          "cached_input": "0.3",
+          "output": "6",
+          "long_context": {
+            "above_input_tokens": 200000,
+            "inclusive": true,
+            "input": "4",
+            "cached_input": "0.6",
+            "output": "12"
+          }
+        }
+      ]
+    },
+    {
+      "provider": "xai",
+      "model": "grok-build-0.1",
+      "aliases": [
+        "grok-code-fast",
+        "grok-code-fast-1",
+        "grok-code-fast-1-0825"
+      ],
+      "pricing_url": "https://docs.x.ai/developers/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2025-01-01T00:00:00Z",
+          "input": "1",
+          "cached_input": "0.2",
+          "output": "2",
+          "long_context": {
+            "above_input_tokens": 200000,
+            "inclusive": true,
+            "input": "2",
+            "cached_input": "0.4",
+            "output": "4"
+          }
+        }
+      ]
+    },
+    {
+      "provider": "xai",
+      "model": "grok-4.3",
+      "aliases": [],
+      "pricing_url": "https://docs.x.ai/developers/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2025-01-01T00:00:00Z",
+          "input": "1.25",
+          "cached_input": "0.2",
+          "output": "2.5",
+          "long_context": {
+            "above_input_tokens": 200000,
+            "inclusive": true,
+            "input": "2.5",
+            "cached_input": "0.4",
+            "output": "5"
+          }
+        }
+      ]
+    },
+    {
+      "provider": "mistral",
+      "model": "mistral-large-2512",
+      "aliases": [
+        "mistral-large-latest"
+      ],
+      "pricing_url": "https://docs.mistral.ai/inference/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2025-01-01T00:00:00Z",
+          "input": "0.5",
+          "cached_input": "0.05",
+          "output": "1.5",
+          "tier_multipliers": {
+            "batch": "0.5",
+            "priority": "1.75"
+          },
+          "region_multipliers": {
+            "regional": "1.1"
+          }
+        }
+      ]
+    },
+    {
+      "provider": "mistral",
+      "model": "mistral-medium-3-5",
+      "aliases": [
+        "mistral-medium-3.5",
+        "mistral-medium-latest"
+      ],
+      "pricing_url": "https://docs.mistral.ai/inference/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2026-01-01T00:00:00Z",
+          "input": "1.5",
+          "cached_input": "0.15",
+          "output": "7.5",
+          "tier_multipliers": {
+            "batch": "0.5",
+            "priority": "1.75"
+          },
+          "region_multipliers": {
+            "regional": "1.1"
+          }
+        }
+      ]
+    },
+    {
+      "provider": "mistral",
+      "model": "mistral-small-2603",
+      "aliases": [
+        "mistral-small-latest"
+      ],
+      "pricing_url": "https://docs.mistral.ai/inference/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2026-01-01T00:00:00Z",
+          "input": "0.15",
+          "cached_input": "0.015",
+          "output": "0.6",
+          "tier_multipliers": {
+            "batch": "0.5",
+            "priority": "1.75"
+          },
+          "region_multipliers": {
+            "regional": "1.1"
+          }
+        }
+      ]
+    },
+    {
+      "provider": "mistral",
+      "model": "ministral-14b-2512",
+      "aliases": [
+        "ministral-14b-latest"
+      ],
+      "pricing_url": "https://docs.mistral.ai/inference/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2025-01-01T00:00:00Z",
+          "input": "0.2",
+          "cached_input": "0.02",
+          "output": "0.2",
+          "tier_multipliers": {
+            "batch": "0.5",
+            "priority": "1.75"
+          }
+        }
+      ]
+    },
+    {
+      "provider": "mistral",
+      "model": "ministral-8b-2512",
+      "aliases": [
+        "ministral-8b-latest"
+      ],
+      "pricing_url": "https://docs.mistral.ai/inference/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2025-01-01T00:00:00Z",
+          "input": "0.15",
+          "cached_input": "0.015",
+          "output": "0.15",
+          "tier_multipliers": {
+            "batch": "0.5",
+            "priority": "1.75"
+          }
+        }
+      ]
+    },
+    {
+      "provider": "mistral",
+      "model": "ministral-3b-2512",
+      "aliases": [
+        "ministral-3b-latest"
+      ],
+      "pricing_url": "https://docs.mistral.ai/inference/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2025-01-01T00:00:00Z",
+          "input": "0.1",
+          "cached_input": "0.01",
+          "output": "0.1",
+          "tier_multipliers": {
+            "batch": "0.5",
+            "priority": "1.75"
+          }
+        }
+      ]
+    },
+    {
+      "provider": "mistral",
+      "model": "codestral-2508",
+      "aliases": [
+        "codestral-latest"
+      ],
+      "pricing_url": "https://docs.mistral.ai/inference/pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2025-01-01T00:00:00Z",
+          "input": "0.3",
+          "cached_input": "0.03",
+          "output": "0.9",
+          "tier_multipliers": {
+            "batch": "0.5",
+            "priority": "1.75"
+          }
+        }
+      ]
+    },
+    {
+      "provider": "dashscope",
+      "model": "qwen3.8-max",
+      "aliases": [],
+      "pricing_url": "https://www.alibabacloud.com/help/en/model-studio/model-pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2026-01-01T00:00:00Z",
+          "input": "2",
+          "output": "6",
+          "tier_multipliers": {
+            "batch": "0.5"
+          }
+        }
+      ]
+    },
+    {
+      "provider": "dashscope",
+      "model": "qwen3.7-max",
+      "aliases": [
+        "qwen3.7-max-2026-05-20",
+        "qwen3.7-max-2026-06-08"
+      ],
+      "pricing_url": "https://www.alibabacloud.com/help/en/model-studio/model-pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2026-05-20T00:00:00Z",
+          "input": "2.5",
+          "output": "7.5",
+          "tier_multipliers": {
+            "batch": "0.5"
+          }
+        }
+      ]
+    },
+    {
+      "provider": "dashscope",
+      "model": "qwen3-max",
+      "aliases": [
+        "qwen3-max-2026-01-23"
+      ],
+      "pricing_url": "https://www.alibabacloud.com/help/en/model-studio/model-pricing",
+      "retrieved_at": "2026-08-30",
+      "prices": [
+        {
+          "effective_from": "2026-01-23T00:00:00Z",
+          "input": "1.2",
+          "output": "6",
+          "long_context": {
+            "above_input_tokens": 32000,
+            "input": "2.4",
+            "output": "12"
+          },
+          "tier_multipliers": {
+            "batch": "0.5"
+          }
+        }
+      ]
+    }
+  ]
+}

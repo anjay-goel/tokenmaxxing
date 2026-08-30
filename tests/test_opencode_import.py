@@ -216,6 +216,40 @@ def test_exact_below_half_nanodollar_cost_is_not_rounded_up(
     assert event.cost.total_nanos == 0
 
 
+def test_missing_reported_total_remains_derived(
+    repository: Repository, tmp_path: Path
+) -> None:
+    path = _source_database(tmp_path)
+    with sqlite3.connect(path) as source:
+        _session(source, "session-1")
+        _assistant_message(source, "message-1", "session-1")
+        source.execute(
+            "INSERT INTO part (id, message_id, session_id, time_created, time_updated, data) "
+            "VALUES ('part-1', 'message-1', 'session-1', 12, 30, ?)",
+            (
+                json.dumps(
+                    {
+                        "type": "step-finish",
+                        "tokens": {
+                            "input": 10,
+                            "output": 4,
+                            "reasoning": 2,
+                            "cache": {"read": 3, "write": 1},
+                        },
+                    }
+                ),
+            ),
+        )
+
+    sync_opencode(repository, OpenCodeRoots.from_data_dir(path.parent))
+
+    event = repository.get_event("opencode:part:part-1")
+    assert event is not None
+    assert event.tokens.reported_total is None
+    assert event.tokens.derived_total == 20
+    assert repository.source_total("opencode").tokens.derived_total == 20
+
+
 def test_importer_never_retains_forbidden_source_content(
     repository: Repository, db_path: Path, tmp_path: Path
 ) -> None:
@@ -350,7 +384,7 @@ def test_child_session_steps_are_counted_once_at_the_root_session(
     event = repository.get_event("opencode:part:child-part")
     assert event is not None
     assert repository.event_count("opencode") == 1
-    assert event.session_id == repository._database.connection.execute(
+    assert event.session_id == repository.connection.execute(
         "SELECT id FROM sessions WHERE source = 'opencode' AND source_session_id = 'root'"
     ).fetchone()[0]
 

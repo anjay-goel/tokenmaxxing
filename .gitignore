@@ -13,3 +13,5 @@ __pycache__/
 salt
 ownership.json
 dist/
+.idea
+/data/

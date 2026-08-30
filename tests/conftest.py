@@ -1,4 +1,4 @@
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -7,19 +7,6 @@ import pytest
 @pytest.fixture
 def db_path(tmp_path: Path) -> Path:
     return tmp_path / "tokenmaxxing.sqlite3"
-
-
-@pytest.fixture
-def fixture_root() -> Path:
-    return Path(__file__).parent / "fixtures"
-
-
-@pytest.fixture
-def source_fixture_root(fixture_root: Path) -> Callable[[str], Path]:
-    def get_root(source: str) -> Path:
-        return fixture_root / source
-
-    return get_root
 
 
 @pytest.fixture

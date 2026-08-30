@@ -82,6 +82,10 @@ def test_projection_keys_and_links_are_idempotent(repo: Repository) -> None:
     assert repo.event_count("claude") == 1
 
 
+def test_connection_exposes_the_sql_adapter_boundary(repo: Repository) -> None:
+    assert repo.connection.execute("SELECT 1").fetchone() == (1,)
+
+
 def test_event_upsert_enriches_sparse_fields(repo: Repository) -> None:
     repo.apply_projection(Projection(events=(event("claude:1", tokens=TokenUsage(input=5)),)))
 

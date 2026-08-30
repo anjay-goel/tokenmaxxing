@@ -117,7 +117,7 @@ class _UsageRow:
             reasoning=self.reasoning_tokens,
             cache_read=self.cache_read,
             cache_write=self.cache_write,
-            reported_total=self.reported_total if self.reported_total is not None else self.derived_total,
+            reported_total=self.reported_total,
             derived_total=self.derived_total,
         )
 
@@ -289,7 +289,7 @@ def _root_session_id(session_id: str, parents: Mapping[str, str]) -> str:
 
 
 def _root_database_id(repository: Repository, source_session_id: str) -> int | None:
-    row = repository._database.connection.execute(
+    row = repository.connection.execute(
         "SELECT id FROM sessions WHERE source = 'opencode' AND source_session_id = ("
         "SELECT root_session_id FROM sessions WHERE source = 'opencode' AND source_session_id = ?)",
         (source_session_id,),
@@ -298,11 +298,11 @@ def _root_database_id(repository: Repository, source_session_id: str) -> int | N
 
 
 def _event_is_current(repository: Repository, row: _UsageRow, session_id: int | None) -> bool:
-    observation = repository._database.connection.execute(
+    observation = repository.connection.execute(
         "SELECT 1 FROM observations WHERE source = 'opencode' AND channel = 'disk' AND stable_key = ?",
         (row.observation_key,),
     ).fetchone()
-    event = repository._database.connection.execute(
+    event = repository.connection.execute(
         "SELECT status, session_id FROM usage_events WHERE source = 'opencode' AND event_key = ?",
         (row.event_key,),
     ).fetchone()

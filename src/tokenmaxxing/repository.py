@@ -7,10 +7,12 @@ from tokenmaxxing.db import Database
 from tokenmaxxing.models import (
     Channel,
     CostUsage,
+    Granularity,
     IssueDraft,
     LinkDraft,
     ObservationDraft,
     Projection,
+    ReportingRow,
     RunDraft,
     SampleDraft,
     SessionDraft,
@@ -132,6 +134,10 @@ def _row_dict(cursor: sqlite3.Cursor, row: sqlite3.Row | tuple[object, ...]) -> 
 class Repository:
     def __init__(self, database: Database) -> None:
         self._database = database
+
+    @property
+    def connection(self) -> sqlite3.Connection:
+        return self._database.connection
 
     def apply_projection(self, projection: Projection) -> WriteStats:
         with self.transaction() as connection:
@@ -498,12 +504,12 @@ class Repository:
             sql += f" GROUP BY {group_column} ORDER BY {group_column}"
         else:
             sql += " HAVING COUNT(*) > 0"
-        cursor = self._database.connection.execute(sql)
+        cursor = self.connection.execute(sql)
         return [self._usage_total(_row_dict(cursor, row)) for row in cursor.fetchall()]
 
     def source_total(self, source: Source) -> UsageTotal:
         sums = [f"SUM({column}) AS {column}" for column in _TOKEN_COLUMNS.values()]
-        cursor = self._database.connection.execute(
+        cursor = self.connection.execute(
             f"SELECT ? AS group_value, {', '.join(sums)}, SUM(total_cost_nanos) AS total_cost_nanos "
             "FROM counted_usage_events WHERE source = ?",
             (source, source),
@@ -513,22 +519,51 @@ class Repository:
             return UsageTotal(group=source, tokens=TokenUsage(), cost_nanos=None)
         return self._usage_total(_row_dict(cursor, row))
 
-    def _reporting_rows(self) -> list[dict[str, object]]:
-        cursor = self._database.connection.execute(
-            "SELECT e.source, "
+    def reporting_rows(self) -> list[ReportingRow]:
+        cursor = self.connection.execute(
+            "SELECT e.source, e.granularity, "
+            "COALESCE(e.provider, r.provider, s.provider) AS provider, "
             "COALESCE(e.response_model, e.model, r.model, "
             "s.current_model, s.initial_model, '(unknown)') AS resolved_model, "
+            "COALESCE(e.model, r.model, s.current_model, s.initial_model) "
+            "AS requested_model, "
             "COALESCE(e.started_at_ns, e.completed_at_ns, r.started_at_ns, "
             "r.completed_at_ns, s.started_at_ns, s.updated_at_ns, s.completed_at_ns) "
             "AS occurred_at_ns, e.input_tokens, e.output_tokens, "
-            "e.cache_read_tokens, e.cache_write_tokens, e.reasoning_tokens, "
-            "e.reported_total_tokens, e.derived_total_tokens, e.total_cost_nanos "
+            "e.cache_read_tokens, e.cache_write_tokens, e.cache_write_5m_tokens, "
+            "e.cache_write_1h_tokens, e.reasoning_tokens, e.reported_total_tokens, "
+            "e.derived_total_tokens, e.total_cost_nanos, "
+            "COALESCE(e.service_tier, s.service_tier) AS service_tier, "
+            "e.speed, e.inference_region "
             "FROM counted_usage_events e "
             "LEFT JOIN runs r ON r.id = e.run_id "
             "LEFT JOIN sessions s ON s.id = COALESCE(e.session_id, r.session_id) "
             "ORDER BY e.source, resolved_model, occurred_at_ns"
         )
-        return [_row_dict(cursor, row) for row in cursor.fetchall()]
+        return [
+            ReportingRow(
+                source=cast(Source, row[0]),
+                granularity=cast(Granularity, row[1]),
+                provider=cast(str | None, row[2]),
+                resolved_model=cast(str, row[3]),
+                requested_model=cast(str | None, row[4]),
+                occurred_at_ns=cast(int | None, row[5]),
+                input_tokens=cast(int | None, row[6]),
+                output_tokens=cast(int | None, row[7]),
+                cache_read_tokens=cast(int | None, row[8]),
+                cache_write_tokens=cast(int | None, row[9]),
+                cache_write_5m_tokens=cast(int | None, row[10]),
+                cache_write_1h_tokens=cast(int | None, row[11]),
+                reasoning_tokens=cast(int | None, row[12]),
+                reported_total_tokens=cast(int | None, row[13]),
+                derived_total_tokens=cast(int | None, row[14]),
+                total_cost_nanos=cast(int | None, row[15]),
+                service_tier=cast(str | None, row[16]),
+                speed=cast(str | None, row[17]),
+                inference_region=cast(str | None, row[18]),
+            )
+            for row in cursor.fetchall()
+        ]
 
     def _usage_total(self, row: dict[str, object]) -> UsageTotal:
         tokens = TokenUsage(
@@ -541,7 +576,7 @@ class Repository:
         )
 
     def get_event(self, event_key: str) -> UsageEventDraft | None:
-        cursor = self._database.connection.execute(
+        cursor = self.connection.execute(
             "SELECT * FROM usage_events WHERE event_key = ? ORDER BY id LIMIT 1",
             (event_key,),
         )
@@ -572,13 +607,13 @@ class Repository:
         )
 
     def list_event_keys(self, source: Source) -> set[str]:
-        rows = self._database.connection.execute(
+        rows = self.connection.execute(
             "SELECT event_key FROM usage_events WHERE source = ?", (source,)
         ).fetchall()
         return {str(row[0]) for row in rows}
 
     def channels_for_event(self, event_key: str) -> set[Channel]:
-        rows = self._database.connection.execute(
+        rows = self.connection.execute(
             "SELECT DISTINCT o.channel FROM observations o "
             "JOIN observation_links l ON l.observation_id = o.id "
             "JOIN usage_events e ON e.id = l.usage_event_id WHERE e.event_key = ?",
@@ -587,13 +622,13 @@ class Repository:
         return {cast(Channel, row[0]) for row in rows}
 
     def observation_count(self, source: Source) -> int:
-        row = self._database.connection.execute(
+        row = self.connection.execute(
             "SELECT COUNT(*) FROM observations WHERE source = ?", (source,)
         ).fetchone()
         return int(row[0]) if row is not None else 0
 
     def event_count(self, source: Source) -> int:
-        row = self._database.connection.execute(
+        row = self.connection.execute(
             "SELECT COUNT(*) FROM usage_events WHERE source = ?", (source,)
         ).fetchone()
         return int(row[0]) if row is not None else 0
