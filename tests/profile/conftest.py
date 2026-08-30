@@ -7,7 +7,7 @@ MINIMAL_CONFIG = """\
 version: 1
 profile:
   name: Ada Lovelace
-  role: Programmer
+  bio: Programmer
   avatar: avatar.webp
   links: []
 site:
@@ -32,9 +32,18 @@ def minimal_config() -> str:
     return MINIMAL_CONFIG
 
 
+@pytest.fixture(autouse=True)
+def isolated_tokenmaxxing_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    path = tmp_path / "tokenmaxxing-home"
+    monkeypatch.setenv("TOKENMAXXING_HOME", str(path))
+    return path
+
+
 @pytest.fixture
 def profile_config_path(tmp_path: Path) -> Path:
-    path = tmp_path / "tokenmaxxing.yaml"
+    path = tmp_path / "config.yaml"
     path.write_text(MINIMAL_CONFIG, encoding="utf-8")
     (tmp_path / "avatar.webp").write_bytes(b"avatar")
     return path

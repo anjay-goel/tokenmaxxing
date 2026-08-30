@@ -14,12 +14,12 @@ personal statistics.
 - `src/tokenmaxxing/data/rate-card.json`: dated public token prices.
 - `src/tokenmaxxing/sync.py`: four-source orchestration.
 - `src/tokenmaxxing/profile/config.py`: strict YAML configuration and discovery.
-- `src/tokenmaxxing/profile/project.py`: project initialization and generated paths.
+- `src/tokenmaxxing/profile/project.py`: project initialization and paths.
 - `src/tokenmaxxing/profile/data.py`: privacy-safe profile aggregation.
 - `src/tokenmaxxing/profile/awards.py`: deterministic aggregate award rules.
 - `src/tokenmaxxing/profile/render.py`: Jinja rendering and public payload creation.
 - `src/tokenmaxxing/profile/build.py`: build validation and rollback-safe replacement.
-- `src/tokenmaxxing/profile/deploy.py`: approved argv planning and execution.
+- `src/tokenmaxxing/profile/deploy.py`: deploy argv planning and execution.
 - `src/tokenmaxxing/profile/schedule.py`: owned OS scheduler integrations.
 - `src/tokenmaxxing/profile/cli.py`: profile workflow and terminal output.
 - `src/tokenmaxxing/profile/templates/` and `assets/`: packaged site source.
@@ -58,12 +58,14 @@ from stored observations. Importer modules own discovery and lifecycle order.
 - Build beside the destination, validate, then replace with rollback. Render,
   validation, or replacement failures preserve the previous site; deploy
   failures keep the new validated local build.
-- Deploy commands are argv lists executed with `shell=False`. A command or
-  relevant configuration change invalidates approval.
+- Deploy commands are argv lists executed with `shell=False`. Interactive
+  publishes confirm the exact argv; scheduled publishes use the YAML command.
+- Interactive onboarding accepts one command string, forces a sync before its
+  first build or publish, and offers scheduling only after publishing succeeds.
 - Scheduler changes may touch only the deterministic job owned by the current
-  profile. Enable scheduling only after a validated build and approved deploy.
-- Packaged templates, starters, and assets are source. Generated
-  `.tokenmaxxing/` state is not.
+  profile. Enable scheduling only after a validated build and deploy plan.
+- Packaged templates, starters, and assets are source. The complete generated
+  static package lives under the profile project's ignored `dist/` directory.
 - Windows batch launchers are not equivalent to shell-free native argv
   execution and must remain rejected.
 

@@ -14,6 +14,8 @@ from tokenmaxxing.repository import Repository
 
 
 _PREFIX_BYTES = 4096
+_SQLITE_INT_MAX = 2**63 - 1
+_UINT64_MODULUS = 2**64
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +39,15 @@ class _Artifact:
     prefix_fingerprint: str | None
     header_session_id: str | None
     last_complete_ordinal: int
+    is_missing: bool
+
+
+def _sqlite_file_id(value: int) -> int:
+    if -2**63 <= value <= _SQLITE_INT_MAX:
+        return value
+    if 0 <= value < _UINT64_MODULUS:
+        return value - _UINT64_MODULUS
+    raise OverflowError("file identity does not fit in 64 bits")
 
 
 def _database_path(connection: sqlite3.Connection) -> Path:
@@ -81,7 +92,7 @@ def _latest_artifact(
 ) -> _Artifact | None:
     row = connection.execute(
         "SELECT id, generation, device, inode, size_bytes, byte_offset, prefix_fingerprint, "
-        "header_session_id, last_complete_ordinal FROM artifacts "
+        "header_session_id, last_complete_ordinal, is_missing FROM artifacts "
         "WHERE source = ? AND path_hash = ? ORDER BY generation DESC LIMIT 1",
         (source, path_hash),
     ).fetchone()
@@ -97,6 +108,7 @@ def _latest_artifact(
         prefix_fingerprint=cast(str | None, row[6]),
         header_session_id=cast(str | None, row[7]),
         last_complete_ordinal=int(row[8] if row[8] is not None else -1),
+        is_missing=bool(row[9]),
     )
 
 
@@ -107,9 +119,10 @@ def _needs_new_generation(
     header_session_id: str | None,
 ) -> bool:
     return (
-        stat.st_size < artifact.size_bytes
-        or stat.st_dev != artifact.device
-        or stat.st_ino != artifact.inode
+        artifact.is_missing
+        or stat.st_size < artifact.size_bytes
+        or _sqlite_file_id(stat.st_dev) != artifact.device
+        or _sqlite_file_id(stat.st_ino) != artifact.inode
         or prefix_fingerprint != artifact.prefix_fingerprint
         or header_session_id != artifact.header_session_id
     )
@@ -124,6 +137,8 @@ def _insert_artifact(
     prefix_fingerprint: str,
     header_session_id: str | None,
 ) -> _Artifact:
+    device = _sqlite_file_id(stat.st_dev)
+    inode = _sqlite_file_id(stat.st_ino)
     cursor = connection.execute(
         "INSERT INTO artifacts "
         "(source, path_hash, device, inode, generation, size_bytes, mtime_ns, byte_offset, "
@@ -132,8 +147,8 @@ def _insert_artifact(
         (
             source,
             path_hash,
-            stat.st_dev,
-            stat.st_ino,
+            device,
+            inode,
             generation,
             stat.st_size,
             stat.st_mtime_ns,
@@ -145,13 +160,14 @@ def _insert_artifact(
     return _Artifact(
         id=int(cursor.lastrowid),
         generation=generation,
-        device=stat.st_dev,
-        inode=stat.st_ino,
+        device=device,
+        inode=inode,
         size_bytes=stat.st_size,
         byte_offset=0,
         prefix_fingerprint=prefix_fingerprint,
         header_session_id=header_session_id,
         last_complete_ordinal=-1,
+        is_missing=False,
     )
 
 
@@ -263,8 +279,8 @@ def scan_jsonl(
             "prefix_fingerprint = ?, header_session_id = ?, last_complete_ordinal = ?, last_seen_at_ns = ? "
             "WHERE id = ?",
             (
-                stat.st_dev,
-                stat.st_ino,
+                _sqlite_file_id(stat.st_dev),
+                _sqlite_file_id(stat.st_ino),
                 stat.st_size,
                 stat.st_mtime_ns,
                 byte_offset,

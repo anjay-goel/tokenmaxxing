@@ -6,6 +6,7 @@ from tokenmaxxing.models import ProfileUsageRow
 from tokenmaxxing.presentation import usage_quip
 from tokenmaxxing.pricing import ApiValueEstimate, estimate_api_value_rows
 from tokenmaxxing.profile.awards import Award, derive_awards
+from tokenmaxxing.profile.model_icons import canonical_creator
 from tokenmaxxing.reporting import ReportWindow, event_total
 
 
@@ -57,6 +58,7 @@ class ProfileData:
     models: tuple[ModelTotal, ...]
     harnesses: tuple[HarnessTotal, ...]
     agent_models: tuple[AgentModelTotal, ...]
+    recent_token_days: tuple[DailyTotal, ...]
     recent_days: tuple[DailyAgentTotal, ...]
     activity_days: tuple[DailyTotal, ...]
     first_tracked_day: date | None
@@ -82,7 +84,12 @@ def _model_totals(
             provider=_primary_provider(providers.get(model, {})),
         )
         for model, total_tokens in sorted(
-            totals.items(), key=lambda item: (-item[1], item[0])
+            (
+                (model, total_tokens)
+                for model, total_tokens in totals.items()
+                if total_tokens > 0
+            ),
+            key=lambda item: (-item[1], item[0]),
         )
     )
 
@@ -94,9 +101,7 @@ def _primary_provider(totals: dict[str, int]) -> str | None:
 
 
 def _row_provider(row: ProfileUsageRow) -> str | None:
-    if row.usage.provider:
-        return row.usage.provider
-    return "opencode" if row.usage.source == "opencode" else None
+    return canonical_creator(row.usage.provider)
 
 
 def _add_provider_tokens(
@@ -268,15 +273,21 @@ def build_profile_data(
         longest_streak=_longest_streak(
             {day for day, _ in agent_days}, recent_days
         ),
-        model_count=len(model_totals),
+        model_count=sum(total > 0 for total in model_totals.values()),
         models=_model_totals(model_totals, model_provider_totals),
         harnesses=tuple(
             HarnessTotal(harness=harness, total_tokens=tokens)
             for harness, tokens in sorted(
-                harness_totals.items(), key=lambda item: (-item[1], item[0])
+                (
+                    (harness, tokens)
+                    for harness, tokens in harness_totals.items()
+                    if tokens > 0
+                ),
+                key=lambda item: (-item[1], item[0]),
             )
         ),
         agent_models=agent_models,
+        recent_token_days=recent_token_days,
         recent_days=recent_days,
         activity_days=activity_days,
         first_tracked_day=min(tracked_days, default=None),

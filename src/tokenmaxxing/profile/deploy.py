@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-import json
 import os
 import signal
 import shutil
@@ -11,35 +9,21 @@ import sys
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 
 from tokenmaxxing.profile.config import ProfileConfig
 from tokenmaxxing.profile.project import ProfilePaths
 
 
-_APPROVAL_KEYS = frozenset(
-    {
-        "version",
-        "fingerprint",
-        "command_template",
-        "argv",
-        "cwd",
-        "canonical_url",
-        "approved_at",
-    }
-)
 _OUTPUT_LIMIT = 64 * 1024
 _DEPLOY_TIMEOUT = 900
 
 
 @dataclass(frozen=True, slots=True)
 class DeployPlan:
-    command_template: tuple[str, ...]
     argv: tuple[str, ...]
     cwd: Path
     canonical_url: str
-    fingerprint: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,25 +44,6 @@ class DeployError(RuntimeError):
         super().__init__(message)
         self.result = result
         self.timed_out = timed_out
-
-
-def _fingerprint(
-    command_template: tuple[str, ...],
-    argv: tuple[str, ...],
-    cwd: Path,
-    canonical_url: str,
-) -> str:
-    document = json.dumps(
-        {
-            "command_template": command_template,
-            "argv": argv,
-            "cwd": str(cwd),
-            "canonical_url": canonical_url,
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(document.encode()).hexdigest()
 
 
 def _expand_argument(argument: str, site_dir: Path) -> str:
@@ -137,98 +102,10 @@ def make_deploy_plan(config: ProfileConfig, paths: ProfilePaths) -> DeployPlan:
     executable = _resolve_executable(expanded[0], cwd)
     argv = (str(executable), *expanded[1:])
     return DeployPlan(
-        command_template=config.deploy.command,
         argv=argv,
         cwd=cwd,
         canonical_url=config.site.canonical_url,
-        fingerprint=_fingerprint(
-            config.deploy.command,
-            argv,
-            cwd,
-            config.site.canonical_url,
-        ),
     )
-
-
-def _approval_document(plan: DeployPlan) -> dict[str, object]:
-    return {
-        "version": 1,
-        "fingerprint": plan.fingerprint,
-        "command_template": list(plan.command_template),
-        "argv": list(plan.argv),
-        "cwd": str(plan.cwd),
-        "canonical_url": plan.canonical_url,
-        "approved_at": datetime.now(UTC).isoformat(),
-    }
-
-
-def _write_private_json(path: Path, document: dict[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", dir=path.parent
-    )
-    temporary = Path(temporary_name)
-    try:
-        os.chmod(temporary, 0o600)
-        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as output:
-            json.dump(document, output, sort_keys=True, separators=(",", ":"))
-            output.write("\n")
-            output.flush()
-            os.fsync(output.fileno())
-        os.replace(temporary, path)
-        os.chmod(path, 0o600)
-    except BaseException:
-        try:
-            os.close(descriptor)
-        except OSError:
-            pass
-        temporary.unlink(missing_ok=True)
-        raise
-
-
-def approve(plan: DeployPlan, approval_path: Path) -> None:
-    _write_private_json(approval_path, _approval_document(plan))
-
-
-def _valid_approval(document: object, plan: DeployPlan) -> bool:
-    if not isinstance(document, dict) or set(document) != _APPROVAL_KEYS:
-        return False
-    if type(document["version"]) is not int or document["version"] != 1:
-        return False
-    command_template = document["command_template"]
-    if not isinstance(command_template, list) or not all(
-        isinstance(value, str) for value in command_template
-    ):
-        return False
-    if command_template != list(plan.command_template):
-        return False
-    argv = document["argv"]
-    if not isinstance(argv, list) or not all(isinstance(value, str) for value in argv):
-        return False
-    if argv != list(plan.argv):
-        return False
-    if document["fingerprint"] != plan.fingerprint:
-        return False
-    if document["cwd"] != str(plan.cwd):
-        return False
-    if document["canonical_url"] != plan.canonical_url:
-        return False
-    approved_at = document["approved_at"]
-    if not isinstance(approved_at, str):
-        return False
-    try:
-        parsed = datetime.fromisoformat(approved_at)
-    except ValueError:
-        return False
-    return parsed.tzinfo is not None
-
-
-def is_approved(plan: DeployPlan, approval_path: Path) -> bool:
-    try:
-        document = json.loads(approval_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError):
-        return False
-    return _valid_approval(document, plan)
 
 
 def _read_tail(stream) -> str:
@@ -308,17 +185,11 @@ def _stop_process_group(process: subprocess.Popen[bytes]) -> None:
 def run_deploy(
     plan: DeployPlan,
     *,
-    approval_path: Path,
     non_interactive: bool,
     confirm: Callable[[DeployPlan], bool],
 ) -> DeployResult:
-    if non_interactive:
-        if not is_approved(plan, approval_path):
-            raise DeployError("deploy command is not approved")
-    else:
-        if not confirm(plan):
-            raise DeployError("deployment cancelled")
-        approve(plan, approval_path)
+    if not non_interactive and not confirm(plan):
+        raise DeployError("deployment cancelled")
 
     with tempfile.TemporaryFile("w+b") as stdout, tempfile.TemporaryFile(
         "w+b"

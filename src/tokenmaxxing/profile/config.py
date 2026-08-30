@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import os
 import re
+import sys
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
-from importlib import resources
 from datetime import time
+from importlib import resources
 from pathlib import Path
 from string import Formatter
 from typing import Literal, cast
@@ -30,7 +33,6 @@ class ProfileLink:
 @dataclass(frozen=True, slots=True)
 class ProfileInfo:
     name: str
-    role: str = ""
     bio: str = ""
     avatar: Path | None = None
     links: tuple[ProfileLink, ...] = ()
@@ -220,9 +222,6 @@ def _profile_info(raw: Mapping[object, object], project: Path) -> ProfileInfo:
         )
     return ProfileInfo(
         name=_string(_value(raw, "name"), "profile.name"),
-        role=_string(
-            _value(raw, "role"), "profile.role", default="", allow_empty=True
-        ),
         bio=_string(
             _value(raw, "bio"), "profile.bio", default="", allow_empty=True
         ),
@@ -315,15 +314,71 @@ def _schedule_config(raw: Mapping[object, object]) -> ScheduleConfig:
     return ScheduleConfig(time=time(hour=hour, minute=minute))
 
 
-def discover_config(start: Path) -> Path:
+def _remembered_profile_error(path: Path) -> FileNotFoundError:
+    return FileNotFoundError(
+        f"remembered profile is unavailable: {path}; "
+        "run `tokenmaxxing profile init` or pass --config"
+    )
+
+
+def remembered_config(path: Path) -> Path | None:
+    if not path.exists():
+        return None
+    try:
+        value = path.read_text(encoding="utf-8").strip()
+    except OSError as error:
+        raise _remembered_profile_error(path) from error
+    candidate = Path(value) if value else path
+    if not value or not candidate.is_absolute() or not candidate.is_file():
+        raise _remembered_profile_error(candidate)
+    return candidate.resolve()
+
+
+def remember_config(config_path: Path, path: Path) -> None:
+    config_path = config_path.resolve(strict=True)
+    if not config_path.is_file():
+        raise FileNotFoundError(f"profile configuration is not a file: {config_path}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            newline="\n",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            delete=False,
+        ) as output:
+            temporary = Path(output.name)
+            output.write(f"{config_path}\n")
+            output.flush()
+            os.fsync(output.fileno())
+        try:
+            os.chmod(temporary, 0o600)
+        except OSError:
+            if sys.platform != "win32":
+                raise
+        os.replace(temporary, path)
+        temporary = None
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def discover_config(start: Path, remembered: Path | None = None) -> Path:
     current = start.resolve()
     if current.is_file():
         current = current.parent
     for directory in (current, *current.parents):
-        candidate = directory / "tokenmaxxing.yaml"
+        candidate = directory / "config.yaml"
         if candidate.is_file():
             return candidate
-    raise FileNotFoundError("could not find tokenmaxxing.yaml in this directory or its parents")
+    if remembered is not None:
+        if config := remembered_config(remembered):
+            return config
+    raise FileNotFoundError(
+        "could not find config.yaml in this directory or its parents"
+    )
 
 
 def _config_from_document(loaded: object, path: Path) -> ProfileConfig:
@@ -336,7 +391,7 @@ def _config_from_document(loaded: object, path: Path) -> ProfileConfig:
     profile = _section(
         root,
         "profile",
-        frozenset({"name", "role", "bio", "avatar", "links"}),
+        frozenset({"name", "bio", "avatar", "links"}),
         required=True,
     )
     site = _section(
@@ -393,13 +448,13 @@ def load_config(path: Path) -> ProfileConfig:
     try:
         loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
     except yaml.YAMLError as error:
-        raise ValueError("tokenmaxxing.yaml contains invalid YAML") from error
+        raise ValueError("config.yaml contains invalid YAML") from error
     return _config_from_document(loaded, path)
 
 
 def load_starter_config(path: Path) -> ProfileConfig:
     source = resources.files("tokenmaxxing.profile").joinpath(
-        "starters", "tokenmaxxing.yaml"
+        "starters", "config.yaml"
     )
     try:
         loaded = yaml.safe_load(source.read_text(encoding="utf-8"))
@@ -420,7 +475,6 @@ def _avatar_value(config_path: Path, avatar: Path | None) -> str | None:
 def _config_document(path: Path, config: ProfileConfig) -> dict[str, object]:
     profile: dict[str, object] = {
         "name": config.profile.name,
-        "role": config.profile.role,
         "bio": config.profile.bio,
     }
     if avatar := _avatar_value(path, config.profile.avatar):

@@ -14,7 +14,7 @@ from xml.etree import ElementTree
 
 from tokenmaxxing.profile.build import validate_site
 from tokenmaxxing.profile.config import ProfileConfig
-from tokenmaxxing.profile.deploy import is_approved, make_deploy_plan
+from tokenmaxxing.profile.deploy import make_deploy_plan
 from tokenmaxxing.profile.project import ProfilePaths
 
 
@@ -514,9 +514,8 @@ def _enable_windows(
 ) -> ScheduleStatus:
     _, existing, _ = _windows_task(paths, runner)
     document = _windows_document(paths, config, command, environ)
-    paths.generated.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
-        prefix=".schedule.", suffix=".xml", dir=paths.generated
+        prefix="tokenmaxxing-schedule-", suffix=".xml"
     )
     temporary = Path(temporary_name)
     try:
@@ -553,9 +552,7 @@ def enable_schedule(
     runner: Runner = subprocess.run,
 ) -> ScheduleStatus:
     validate_site(paths.site, noindex=not config.site.indexable)
-    deploy_plan = make_deploy_plan(config, paths)
-    if not is_approved(deploy_plan, paths.deploy_approval):
-        raise ValueError("deploy command is not approved")
+    make_deploy_plan(config, paths)
     resolved_executable = _scheduler_executable(executable, platform)
     command = _scheduled_command(paths, resolved_executable, db_path)
     for value in command:

@@ -2,6 +2,7 @@ import json
 import shutil
 import time
 from datetime import UTC, datetime, timedelta
+from importlib import resources
 from io import StringIO
 from pathlib import Path
 from zoneinfo import TZPATH, ZoneInfo
@@ -275,10 +276,10 @@ def test_stats_uses_one_reporting_snapshot(
         (99_999, "Just a light snack."),
         (999_999, "A tidy little token trail."),
         (9_999_999, "The agents are stretching their legs."),
-        (99_999_999, "Your autocomplete has a work ethic."),
-        (999_999_999, "You may have accidentally hired a small team."),
-        (9_999_999_999, "You didn't use AI. You employed a small civilization."),
-        (10_000_000_000, "The tokens have unionized."),
+        (99_999_999, "Autocomplete has been promoted to middle management."),
+        (999_999_999, "The agents have started holding stand-ups."),
+        (9_999_999_999, "A small civilization has entered the context window."),
+        (10_000_000_000, "The context window now has a GDP."),
     ],
 )
 def test_usage_hint_tracks_the_size_of_the_token_trail(
@@ -392,13 +393,22 @@ def test_local_timezone_preserves_dst_rules_from_a_copied_tzfile(
 ) -> None:
     from tokenmaxxing.cli import _local_timezone
 
-    source = next(
-        path / "America" / "New_York"
-        for path in map(Path, TZPATH)
-        if (path / "America" / "New_York").is_file()
-    )
     localtime = tmp_path / "localtime"
-    shutil.copyfile(source, localtime)
+    source = next(
+        (
+            path / "America" / "New_York"
+            for path in map(Path, TZPATH)
+            if (path / "America" / "New_York").is_file()
+        ),
+        None,
+    )
+    if source is not None:
+        shutil.copyfile(source, localtime)
+    else:
+        packaged = resources.files("tzdata.zoneinfo").joinpath(
+            "America", "New_York"
+        )
+        localtime.write_bytes(packaged.read_bytes())
     monkeypatch.delenv("TZ", raising=False)
 
     timezone = _local_timezone(localtime)
@@ -882,14 +892,25 @@ def test_unknown_root_command_never_falls_through_to_export(
         cli.main(["definitely-not-a-command"])
 
 
-def test_version_is_available_without_a_subcommand(capsys: pytest.CaptureFixture[str]) -> None:
-    from tokenmaxxing.cli import main
+def test_version_is_available_without_a_subcommand(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tokenmaxxing import cli
+
+    names: list[str] = []
+
+    def package_version(name: str) -> str:
+        names.append(name)
+        return "0.1.0"
+
+    monkeypatch.setattr(cli, "version", package_version)
 
     with pytest.raises(SystemExit) as raised:
-        main(["--version"])
+        cli.main(["--version"])
 
     assert raised.value.code == 0
-    assert capsys.readouterr().out.strip()
+    assert capsys.readouterr().out.strip() == "0.1.0"
+    assert names == ["tokenmaxxing"]
 
 
 def test_profile_errors_are_useful_and_debug_can_reraise(
@@ -905,7 +926,7 @@ def test_profile_errors_are_useful_and_debug_can_reraise(
         "run_profile",
         lambda arguments: (_ for _ in ()).throw(expected),
     )
-    command = ["profile", "--config", str(tmp_path / "tokenmaxxing.yaml"), "status"]
+    command = ["profile", "--config", str(tmp_path / "config.yaml"), "status"]
 
     assert cli.main(command) == 1
     captured = capsys.readouterr()

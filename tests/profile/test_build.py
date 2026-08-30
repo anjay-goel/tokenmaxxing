@@ -17,7 +17,7 @@ from tokenmaxxing.profile.project import ProfilePaths, profile_paths
 
 
 def prepared_project(tmp_path: Path, minimal_config: str) -> ProfilePaths:
-    config = tmp_path / "tokenmaxxing.yaml"
+    config = tmp_path / "config.yaml"
     config.write_text(minimal_config, encoding="utf-8")
     (tmp_path / "avatar.webp").write_bytes(b"avatar")
     database = Database.open(tmp_path / "usage.sqlite3")
@@ -54,7 +54,6 @@ def public_payload(*, awards: bool = True) -> dict[str, object]:
         "generated_at": "2026-08-30T12:00:00+00:00",
         "profile": {
             "name": "Ada Lovelace",
-            "role": "Programmer",
             "bio": "Makes machines think.",
             "avatar": "assets/avatar.webp",
             "links": [
@@ -104,7 +103,7 @@ def write_valid_site(destination: Path, *, noindex: bool = True) -> None:
     )
     if noindex:
         (destination / "robots.txt").write_text(
-            "User-agent: *\nDisallow: /\n", encoding="utf-8"
+            "User-agent: *\nAllow: /\n", encoding="utf-8"
         )
     else:
         (destination / "robots.txt").write_text(
@@ -844,10 +843,10 @@ def test_indexability_metadata_must_match_mode(tmp_path: Path) -> None:
         validate_site(tmp_path, noindex=True)
 
 
-def test_noindex_robots_file_must_disallow_everything(tmp_path: Path) -> None:
+def test_noindex_robots_file_must_allow_crawlers_to_read_meta_tag(tmp_path: Path) -> None:
     write_valid_site(tmp_path)
     (tmp_path / "robots.txt").write_text(
-        "User-agent: *\nAllow: /\n", encoding="utf-8"
+        "User-agent: *\nDisallow: /\n", encoding="utf-8"
     )
 
     with pytest.raises(ValueError, match="robots.txt"):
@@ -893,7 +892,7 @@ def test_destination_symlink_or_file_is_rejected(
     tmp_path: Path, minimal_config: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     paths = prepared_project(tmp_path, minimal_config)
-    paths.site.parent.mkdir(parents=True)
+    paths.site.parent.mkdir(parents=True, exist_ok=True)
     paths.site.write_text("not a directory", encoding="utf-8")
     monkeypatch.setattr(
         "tokenmaxxing.profile.build.render_site",

@@ -46,8 +46,12 @@ def _clean_environment(state: Path) -> dict[str, str]:
 
 
 def test_built_wheel_contains_every_profile_resource(built_wheel: Path) -> None:
+    assert built_wheel.name.startswith("tokenmaxxing-0.1.0-")
     with ZipFile(built_wheel) as archive:
         names = set(archive.namelist())
+        metadata = archive.read("tokenmaxxing-0.1.0.dist-info/METADATA").decode()
+
+    assert "Name: tokenmaxxing\n" in metadata
 
     required = {
         "tokenmaxxing/data/rate-card.json",
@@ -59,13 +63,13 @@ def test_built_wheel_contains_every_profile_resource(built_wheel: Path) -> None:
         "tokenmaxxing/profile/assets/fonts/NOTICE.md",
         "tokenmaxxing/profile/starters/custom.css",
         "tokenmaxxing/profile/starters/gitignore",
-        "tokenmaxxing/profile/starters/tokenmaxxing.yaml",
-        "tokenmaxxing/profile/starters/wrangler.jsonc",
+        "tokenmaxxing/profile/starters/config.yaml",
         "tokenmaxxing/profile/templates/index.html.j2",
         "tokenmaxxing/profile/templates/partials/activity.html.j2",
         "tokenmaxxing/profile/templates/partials/agents.html.j2",
         "tokenmaxxing/profile/templates/partials/header.html.j2",
         "tokenmaxxing/profile/templates/partials/models.html.j2",
+        "tokenmaxxing/profile/templates/partials/trend.html.j2",
     }
     assert required <= names
     model_icons = {
@@ -76,9 +80,43 @@ def test_built_wheel_contains_every_profile_resource(built_wheel: Path) -> None:
         "moonshot",
         "openai",
         "opencode",
+        "pi",
         "qwen",
         "xai",
         "zai",
+        "ai2",
+        "ai21",
+        "ai360",
+        "baichuan",
+        "baidu",
+        "bedrock",
+        "chatglm",
+        "cohere",
+        "dbrx",
+        "doubao",
+        "gemma",
+        "huggingface",
+        "hunyuan",
+        "ibm",
+        "internlm",
+        "kimi",
+        "liquid",
+        "longcat",
+        "meta",
+        "microsoft",
+        "minimax",
+        "nvidia",
+        "perplexity",
+        "rwkv",
+        "sensenova",
+        "skywork",
+        "snowflake",
+        "spark",
+        "stepfun",
+        "tii",
+        "wenxin",
+        "xiaomimimo",
+        "yi",
     }
     assert {
         f"tokenmaxxing/profile/assets/icons/{name}.svg" for name in model_icons
@@ -151,8 +189,6 @@ def test_installed_wheel_initializes_and_builds_outside_checkout(
             "--db",
             str(database),
             "profile",
-            "--config",
-            str(project / "tokenmaxxing.yaml"),
             "build",
             "--json",
         ],
@@ -165,7 +201,7 @@ def test_installed_wheel_initializes_and_builds_outside_checkout(
     )
     payload = json.loads(result.stdout)
     site = Path(payload["site_dir"])
-    assert site == (project / ".tokenmaxxing" / "site").resolve()
+    assert site == (project / "dist").resolve()
     assert (site / "index.html").is_file()
     assert (site / "profile.json").is_file()
     assert (site / "assets" / "profile.css").is_file()

@@ -100,7 +100,7 @@ def _local_timezone(localtime_path: Path = Path("/etc/localtime")) -> tzinfo:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="tokenmaxxing")
     parser.add_argument(
-        "--version", action="version", version=version("tokenmaxxing-history")
+        "--version", action="version", version=version("tokenmaxxing")
     )
     parser.add_argument("--db", type=Path, default=default_paths().db_path)
     parser.add_argument("--debug", action="store_true")

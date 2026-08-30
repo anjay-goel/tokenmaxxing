@@ -18,30 +18,20 @@ from markupsafe import Markup
 from tokenmaxxing.presentation import api_value_text, compact_tokens
 from tokenmaxxing.profile.config import ProfileConfig, ProfileInfo, SiteConfig
 from tokenmaxxing.profile.data import ProfileData
+from tokenmaxxing.profile.model_icons import model_icon
 from tokenmaxxing.profile.project import ProfilePaths
 
 
 JsonValue: TypeAlias = (
     None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 )
+PROFILE_SOURCE_URL = "https://github.com/anjay-goel/tokenmaxxing"
 
-_PROVIDER_ICONS = {
-    "openai": "openai",
-    "anthropic": "claude",
-    "google": "google",
-    "deepseek": "deepseek",
-    "zai": "zai",
-    "kimi": "moonshot",
-    "moonshot": "moonshot",
-    "xai": "xai",
-    "mistral": "mistral",
-    "dashscope": "qwen",
-    "opencode": "opencode",
-}
 _HARNESS_ICONS = {
     "claude": "claude",
     "codex": "openai",
     "opencode": "opencode",
+    "pi": "pi",
 }
 _AWARD_FACES = {
     "tokenmaxxer": "10B",
@@ -71,7 +61,6 @@ def _avatar_url(profile: ProfileInfo) -> str | None:
 def _public_profile(profile: ProfileInfo) -> dict[str, JsonValue]:
     return {
         "name": profile.name,
-        "role": profile.role,
         "bio": profile.bio,
         "avatar": _avatar_url(profile),
         "links": [
@@ -92,16 +81,21 @@ def _public_site(site: SiteConfig) -> dict[str, JsonValue]:
 
 
 def _display_model(name: str) -> str:
-    if name.strip().lower() in {"unknown", "unknown model", "unknown models"}:
+    if name.strip().lower() in {
+        "(unknown)",
+        "<unknown>",
+        "unknown",
+        "unknown model",
+        "unknown models",
+    }:
         return "unknown models"
     return name
 
 
 def _provider_icon(item: object) -> str:
     provider = getattr(item, "provider", None)
-    if not isinstance(provider, str):
-        return "generic"
-    return _PROVIDER_ICONS.get(provider.strip().lower(), "generic")
+    model = str(getattr(item, "model", ""))
+    return model_icon(provider if isinstance(provider, str) else None, model)
 
 
 def _group_token_models(models: object, total: int) -> list[dict[str, JsonValue]]:
@@ -145,6 +139,52 @@ def _activity_levels(data: ProfileData) -> dict[date, int]:
         day.day: min(4, bisect_right(cuts, day.total_tokens) + 1)
         for day in data.activity_days
         if day.total_tokens > 0
+    }
+
+
+def _trend_view(data: ProfileData) -> dict[str, JsonValue]:
+    width = 900
+    top = 6
+    baseline = 126
+    window_days = (data.window_end - data.window_start).days + 1
+    days = data.recent_token_days[-window_days:]
+    maximum = max((day.total_tokens for day in days), default=0)
+    step = width / (len(days) - 1) if len(days) > 1 else 0
+
+    points: list[dict[str, JsonValue]] = []
+    coordinates: list[tuple[float, float]] = []
+    for index, day in enumerate(days):
+        x = index * step if len(days) > 1 else width / 2
+        ratio = day.total_tokens / maximum if maximum else 0
+        y = baseline - ratio * (baseline - top)
+        coordinates.append((x, y))
+        points.append(
+            {
+                "date": day.day.isoformat(),
+                "tokens": day.total_tokens,
+                "models": _group_token_models(day.models, day.total_tokens),
+            }
+        )
+
+    line_path = " ".join(
+        f"{'M' if index == 0 else 'L'}{x:.2f} {y:.2f}"
+        for index, (x, y) in enumerate(coordinates)
+    )
+    if coordinates:
+        first_x = coordinates[0][0]
+        last_x, last_y = coordinates[-1]
+        area_path = f"{line_path} L{last_x:.2f} {baseline} L{first_x:.2f} {baseline} Z"
+    else:
+        last_x = width
+        last_y = baseline
+        area_path = ""
+
+    return {
+        "days": points,
+        "line_path": line_path,
+        "area_path": area_path,
+        "last_x": round(last_x, 2),
+        "last_y": round(last_y, 2),
     }
 
 
@@ -287,12 +327,18 @@ def _environment(template_root: Path | None) -> SandboxedEnvironment:
     )
     environment.filters["tokens"] = compact_tokens
     environment.filters["date"] = _format_date
+    environment.filters["short_date"] = _format_short_date
     return environment
 
 
 def _format_date(value: str) -> str:
     parsed = date.fromisoformat(value)
     return f"{parsed.strftime('%b')} {parsed.day}, {parsed.year}"
+
+
+def _format_short_date(value: str) -> str:
+    parsed = date.fromisoformat(value)
+    return f"{parsed.strftime('%b')} {parsed.day}"
 
 
 def _copy_assets(destination: Path) -> None:
@@ -326,7 +372,7 @@ def _structured_data(payload: dict[str, JsonValue]) -> Markup:
         "mainEntity": {
             "@type": "Person",
             "name": profile["name"],
-            "description": profile["bio"] or profile["role"],
+            "description": profile["bio"],
         },
     }
     encoded = json.dumps(document, ensure_ascii=False, separators=(",", ":")).replace("<", "\\u003c")
@@ -336,7 +382,7 @@ def _structured_data(payload: dict[str, JsonValue]) -> Markup:
 def _write_discovery(config: ProfileConfig, destination: Path, noindex: bool) -> None:
     if noindex:
         (destination / "robots.txt").write_text(
-            "User-agent: *\nDisallow: /\n", encoding="utf-8"
+            "User-agent: *\nAllow: /\n", encoding="utf-8"
         )
         sitemap = destination / "sitemap.xml"
         if sitemap.exists():
@@ -379,10 +425,16 @@ def render_site(
         profile=payload["profile"],
         site=payload["site"],
         stats=payload["stats"],
+        trend=_trend_view(data),
+        asset_version=int(data.generated_at.timestamp()),
+        activity_tokens=compact_tokens(
+            sum(day.total_tokens for day in data.activity_days)
+        ),
         awards=_award_views(data),
         noindex=effective_noindex,
         structured_data=_structured_data(payload),
         has_custom_css=(paths.root / "custom.css").is_file(),
+        source_url=PROFILE_SOURCE_URL,
     )
     (destination / "index.html").write_text(html, encoding="utf-8")
     (destination / "profile.json").write_text(

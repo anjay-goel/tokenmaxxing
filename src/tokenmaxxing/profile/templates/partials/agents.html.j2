@@ -1,11 +1,12 @@
 <section class="content-section" aria-labelledby="agents-title">
   <div class="section-heading"><h2 id="agents-title">Agents</h2></div>
   {% set maximum = stats.agents|map(attribute='agents')|max if stats.agents else 0 %}
-  <div class="agents-chart" data-roving="agents" aria-label="Agents by day">
+  <div class="agents-chart" style="--agent-days: {{ stats.agents|length }}" data-roving="agents" aria-label="Agents by day">
     {% for day in stats.agents %}
     <button class="agent-bar" type="button" style="--bar-height: {{ (day.agents * 100 / maximum) if maximum else 0 }}%" data-tooltip="{{ day.date }} · {{ day.agents }} agents{% for model in day.models %}&#10;{{ model.name }} · {{ model.agents }}{% endfor %}" aria-label="{{ day.date }}: {{ day.agents }} agents" aria-describedby="activity-tooltip" aria-expanded="false" tabindex="{{ 0 if loop.first else -1 }}">
       {% for model in day.models %}<span style="--segment: {{ loop.index0 % 7 }}; flex-grow: {{ model.agents }}"></span>{% endfor %}
     </button>
     {% endfor %}
   </div>
+  <div class="chart-range" aria-hidden="true"><span>{{ stats.window_start|short_date }}</span><span>{{ stats.window_end|short_date }}</span></div>
 </section>

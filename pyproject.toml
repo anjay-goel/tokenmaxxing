@@ -6,7 +6,7 @@ build-backend = "uv_build"
 module-name = "tokenmaxxing"
 
 [project]
-name = "tokenmaxxing-history"
+name = "tokenmaxxing"
 version = "0.1.0"
 description = "Local metadata-only agent usage accounting"
 readme = "README.md"

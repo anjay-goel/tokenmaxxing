@@ -18,37 +18,36 @@ This document is the implementation contract for the first public version.
   enter the generated site.
 
 Provider APIs, account creation, domain configuration, and secret management
-are outside Tokenmaxxing. The deploy runner invokes an approved local command;
+are outside Tokenmaxxing. The deploy runner invokes the configured local command;
 it does not reimplement Cloudflare, Netlify, Vercel, or another host.
 
 ## Install and first run
 
-Users install the CLI once. They do not need a Tokenmaxxing source checkout to
-own a profile project.
+Users install the CLI once from the checkout, then create a separate profile
+project wherever they want.
 
 ```bash
-uv tool install tokenmaxxing-history
+uv tool install .
 tokenmaxxing sync
 tokenmaxxing profile init ~/my-token-profile
 cd ~/my-token-profile
 tokenmaxxing profile preview
 ```
 
-Until the package is published, contributors install it from this checkout:
+`profile init` asks for a name, bio, optional avatar, optional
+LinkedIn/GitHub/website URLs, and canonical URL. The avatar may come from
+anywhere on the computer; Tokenmaxxing copies it into the profile project. The
+computer's timezone is detected automatically, with UTC as a fallback. Invalid
+paths, links, and canonical URLs are explained and prompted again.
 
-```bash
-uv tool install .
-```
+It then runs the first sync, builds `dist/`, and serves the page locally while
+the user inspects it. Only after preview does it ask for an optional deployment
+command. A configured command leads to the first publish, then an optional
+daily schedule and publish time. Scheduling is never enabled before a
+successful publish. A cancelled first run can be rerun without `--force`.
 
-`profile init` is a short interactive onboarding flow. It asks only for profile
-details, canonical URL, deploy command, and preferred daily schedule time.
-Invalid links, canonical URLs, timezones, and schedule times are explained and
-prompted again. Tokenmaxxing validates the complete configuration in memory
-before creating project files, then writes the answers to ordinary YAML. A
-cancelled first run can be rerun without `--force`. Scheduling remains disabled
-until the user completes an approved publish and enables it explicitly. A
-future GitHub template may provide the same project layout, but cloning a
-template is optional.
+The first sync can take a while because it scans existing historical records.
+Subsequent syncs are incremental and are usually much faster.
 
 ## Command surface
 
@@ -72,13 +71,14 @@ tokenmaxxing
 
 Place `--config PATH` after `profile` and before its command. Without it,
 Tokenmaxxing searches the current directory and its parents for
-`tokenmaxxing.yaml`. `profile init` does not accept `--config`; its directory
-argument selects the new project.
+`config.yaml`, then uses the last successfully initialized profile.
+`profile init` does not accept `--config`; its directory argument selects and
+remembers the new project.
 
 ### `profile init`
 
-Creates a project in `DIRECTORY`, defaulting to `./tokenmaxxing-profile`, then
-runs onboarding.
+Creates a project in `DIRECTORY`, or prompts for one with
+`./tokenmaxxing-profile` as the default, then runs onboarding.
 
 - `--no-setup` writes a documented starter configuration without prompting.
 - `--editable-template` copies the packaged HTML templates into the project.
@@ -87,7 +87,7 @@ runs onboarding.
 
 ### `profile edit`
 
-Opens `tokenmaxxing.yaml` with `$VISUAL`, then `$EDITOR`, then the platform
+Opens `config.yaml` with `$VISUAL`, then `$EDITOR`, then the platform
 default editor. It validates the file after the editor closes.
 
 - `--publish` publishes after successful validation.
@@ -105,7 +105,7 @@ and opens the browser.
 
 Builds and validates the portable static site without deploying it.
 
-- `--output DIRECTORY` defaults to `.tokenmaxxing/site`.
+- `--output DIRECTORY` defaults to `dist` inside the profile project.
 - `--json` emits a stable machine-readable result.
 
 ### `profile publish`
@@ -113,13 +113,13 @@ Builds and validates the portable static site without deploying it.
 Builds, validates, then runs the configured deploy command.
 
 - `--sync` imports local histories before building.
-- `--non-interactive` refuses any action that still needs approval.
+- `--non-interactive` skips the publish confirmation for scheduled updates.
 - `--json` emits a stable machine-readable result.
 
 ### `profile status`
 
-Validates configuration and reports the built-site path, deploy approval,
-configured public URL, and schedule state.
+Validates configuration and reports the built-site path, configured public URL,
+and schedule state.
 
 - `--json` emits the same core status plus structured scheduler job and command
   details for automation.
@@ -137,20 +137,20 @@ tokenmaxxing profile publish --sync --non-interactive
 
 ## Profile project
 
-Generated state stays separate from files a person is expected to edit:
+The complete static package is built into one ignored directory:
 
 ```text
 my-token-profile/
-|-- tokenmaxxing.yaml
+|-- config.yaml
 |-- assets/                    # optional, user-created
 |   `-- avatar.webp            # optional
 |-- custom.css
-|-- wrangler.jsonc             # optional host configuration
 |-- template/                  # only with --editable-template
 |-- .gitignore
-`-- .tokenmaxxing/             # generated and ignored
-    |-- site/
-    `-- deploy-approval.json   # after interactive deploy approval
+`-- dist/                      # complete deployable static site
+    |-- index.html
+    |-- profile.json
+    `-- assets/
 ```
 
 The profile project may be committed independently of Tokenmaxxing. Generated
@@ -159,7 +159,7 @@ does not create GitHub activity.
 
 ## Configuration
 
-`tokenmaxxing.yaml` is the source of truth. It contains no credentials and no
+`config.yaml` is the source of truth. It contains no credentials and no
 private database identifiers.
 
 ```yaml
@@ -167,10 +167,12 @@ version: 1
 
 profile:
   name: Anjay Goel
-  role: Software Engineer at Dashtoon
-  bio: ""
+  bio: Software Engineer at Dashtoon
   avatar: assets/avatar.webp
   links:
+    - label: LinkedIn
+      value: anjay-goel
+      url: https://www.linkedin.com/in/anjay-goel
     - label: GitHub
       value: anjay-goel
       url: https://github.com/anjay-goel
@@ -179,8 +181,8 @@ profile:
       url: https://anjay.sh
 
 site:
-  title: Anjay's token trail
-  description: Aggregate local AI agent usage.
+  title: Anjay Goel | Token Trail
+  description: A visual snapshot of AI agent usage.
   canonical_url: https://anjay.sh/tokenmaxxing/
   indexable: true
   timezone: Asia/Kolkata
@@ -220,10 +222,12 @@ Rules are deliberately narrow:
 - `canonical_url` must be an absolute HTTPS URL without credentials, a query,
   or a fragment. A missing trailing slash is added automatically so relative
   assets and sitemap URLs remain under a configured subpath.
-- New projects set `indexable: false`; publishing becomes discoverable only
-  after the user explicitly changes it to `true`.
+- Interactive setup makes the configured public profile indexable.
+- `profile init --no-setup` leaves the starter at `indexable: false`; preview
+  always remains noindex.
 - `deploy.command` is a YAML list of arguments, never a shell string.
-- The only initial command placeholder is `{site_dir}`.
+- `{site_dir}` expands to the generated `dist/` path when present, but deploy
+  commands may rely entirely on provider configuration and omit it.
 - Environment variables and credentials remain in the provider's own login,
   keychain, or process environment.
 
@@ -311,7 +315,7 @@ Initial budgets and manual release targets:
 Builds render into a sibling temporary directory on the same volume.
 Tokenmaxxing validates HTML, required assets, JSON shape, internal paths,
 metadata, and privacy allowlists before a rollback-safe replacement of
-`.tokenmaxxing/site`. The previous directory is retained as a temporary backup
+`dist`. The previous directory is retained as a temporary backup
 until the validated site is in place; a failed build leaves it untouched and a
 failed replacement restores it. Deployment starts only after a successful
 replacement. This is not described as an atomic directory swap because Windows
@@ -321,17 +325,14 @@ The deploy runner executes an argument list directly with no shell. Pipes,
 redirection, command substitution, glob expansion, and chained commands are
 therefore unavailable. It resolves `{site_dir}` to the validated build path.
 
-Before the first interactive publish, Tokenmaxxing displays the exact command,
-working directory, and public URL. Approval stores a fingerprint of the command
-template and relevant deploy configuration in
-`.tokenmaxxing/deploy-approval.json`. Any change invalidates approval.
-`--non-interactive` refuses to publish until the current fingerprint has been
-approved interactively.
+Interactive publishing displays the exact command, working directory, and
+public URL before running it. `--non-interactive` skips that prompt and exists
+for the scheduled command generated by Tokenmaxxing.
 
-Host presets are onboarding conveniences only. A Cloudflare preset may create
-`wrangler.jsonc` and an argv list; other presets may create equivalent local
-CLI configuration. Tokenmaxxing never stores provider tokens or calls provider
-deployment APIs itself.
+Onboarding asks for one optional shell-style deployment command and parses it
+into the argument list stored in YAML. Tokenmaxxing never creates provider
+configuration, stores provider tokens, or calls provider deployment APIs
+itself.
 
 ## Scheduling
 
@@ -347,7 +348,8 @@ Scheduling uses the operating system, not a resident Tokenmaxxing daemon:
 Generated jobs use absolute CLI and project paths and run non-interactively.
 Linux uses the user journal. Windows status points to Task Scheduler History
 because Task Scheduler does not provide safe argv-based file redirection.
-Enabling a schedule requires a successful build and current deploy approval.
+Enabling a schedule requires a successful build and a valid configured deploy
+command.
 Disabling removes only a job whose ownership marker matches that profile
 project. Provider credentials remain the provider CLI's responsibility.
 
@@ -369,11 +371,11 @@ such as `node.exe` with a JavaScript CLI path as separate argv entries.
 Profile code lives under `src/tokenmaxxing/profile/`:
 
 - `config.py`: strict YAML models, discovery, parsing, and validation.
-- `project.py`: initialization, editor launch, and generated state paths.
+- `project.py`: initialization, editor launch, and project paths.
 - `data.py`: aggregate profile data and privacy-safe serialization.
 - `render.py`: Jinja environment and static asset rendering.
 - `build.py`: temporary build, validation, and rollback-safe replacement.
-- `deploy.py`: approval fingerprints and argv execution.
+- `deploy.py`: deploy argv planning and execution.
 - `schedule.py`: LaunchAgent, systemd, and Task Scheduler ownership.
 - `cli.py`: profile subparsers and concise terminal presentation.
 - `templates/` and `assets/`: the readable default site source.
@@ -400,8 +402,8 @@ Implementation is complete when:
 6. Failed rendering, validation, synchronization, and replacement preserve the
    previous successful site. Failed deployment keeps the new validated local
    build available for inspection or retry. All failures are actionable.
-7. Scheduled publishing is idempotent on macOS, Linux, and Windows, owns only
-   its generated job, and refuses stale deploy approval.
+7. Scheduled publishing is idempotent on macOS, Linux, and Windows and owns
+   only its generated job.
 8. Automated tests pass schema, link, privacy, and size checks. The release
    checklist records a manual keyboard/screen-reader review and production
    Lighthouse run; these browser checks do not run in CI.

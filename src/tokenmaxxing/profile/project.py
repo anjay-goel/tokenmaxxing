@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 _STARTER_FILES = {
-    "tokenmaxxing.yaml": "tokenmaxxing.yaml",
+    "config.yaml": "config.yaml",
     "custom.css": "custom.css",
     "gitignore": ".gitignore",
 }
@@ -21,25 +21,16 @@ _STARTER_FILES = {
 class ProfilePaths:
     root: Path
     config: Path
-    generated: Path
     site: Path
-    build_state: Path
-    deploy_approval: Path
-    logs: Path
 
 
 def profile_paths(config_path: Path) -> ProfilePaths:
     config = config_path.resolve()
     root = config.parent
-    generated = root / ".tokenmaxxing"
     return ProfilePaths(
         root=root,
         config=config,
-        generated=generated,
-        site=generated / "site",
-        build_state=generated / "build.json",
-        deploy_approval=generated / "deploy-approval.json",
-        logs=generated / "logs",
+        site=root / "dist",
     )
 
 
@@ -107,7 +98,7 @@ def initialize_project(
 
     if editable_template and templates.is_dir():
         _copy_tree_missing(templates, project_root / "template", project_root)
-    return directory / "tokenmaxxing.yaml"
+    return directory / "config.yaml"
 
 
 def _split_windows_command(command: str) -> list[str]:

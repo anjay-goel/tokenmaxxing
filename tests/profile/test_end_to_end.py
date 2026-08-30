@@ -6,8 +6,6 @@ import yaml
 
 from tokenmaxxing.cli import main
 from tokenmaxxing.db import Database
-from tokenmaxxing.profile.config import load_config
-from tokenmaxxing.profile.deploy import approve, make_deploy_plan
 from tokenmaxxing.profile.project import profile_paths
 
 
@@ -30,7 +28,7 @@ def _configure_deploy(config_path: Path, script: Path, marker: Path) -> None:
     )
 
 
-def test_init_build_approval_and_fake_publish_work_together(
+def test_init_build_and_fake_publish_work_together(
     tmp_path: Path, capsys
 ) -> None:
     project = tmp_path / "profile"
@@ -48,7 +46,7 @@ def test_init_build_approval_and_fake_publish_work_together(
     assert main(["profile", "init", str(project), "--no-setup"]) == 0
     capsys.readouterr()
     _initialize_database(database)
-    config_path = project / "tokenmaxxing.yaml"
+    config_path = project / "config.yaml"
     _configure_deploy(config_path, deploy, marker)
 
     assert (
@@ -67,8 +65,6 @@ def test_init_build_approval_and_fake_publish_work_together(
     )
     build_payload = json.loads(capsys.readouterr().out)
     paths = profile_paths(config_path)
-    approve(make_deploy_plan(load_config(config_path), paths), paths.deploy_approval)
-
     assert (
         main(
             [

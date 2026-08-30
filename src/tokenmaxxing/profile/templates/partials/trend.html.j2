@@ -1,0 +1,18 @@
+<section class="content-section" aria-labelledby="trend-title">
+  <div class="section-heading"><h2 id="trend-title">Activity</h2></div>
+  <figure class="trend-frame">
+    <svg class="trend-chart" viewBox="0 0 900 136" preserveAspectRatio="none" aria-hidden="true">
+      <line class="trend-grid" x1="0" x2="900" y1="126" y2="126"></line>
+      <path class="trend-area" d="{{ trend.area_path }}"></path>
+      <path class="trend-line" d="{{ trend.line_path }}"></path>
+      <circle class="trend-point" cx="{{ trend.last_x }}" cy="{{ trend.last_y }}" r="4"></circle>
+    </svg>
+    <div class="trend-points" style="--trend-days: {{ trend.days|length }}" data-roving="trend" aria-label="Daily token values for the last {{ stats.window_days }} days">
+      {% for day in trend.days %}
+      <button class="trend-hit" type="button" data-tooltip="{{ day.date }} · {{ day.tokens|tokens }} tokens{% for model in day.models %}&#10;{{ model.name }} · {{ model.tokens|tokens }}{% endfor %}" aria-label="{{ day.date }}: {{ day.tokens|tokens }} tokens" aria-describedby="activity-tooltip" aria-expanded="false" tabindex="{{ 0 if loop.first else -1 }}"></button>
+      {% endfor %}
+    </div>
+    <figcaption class="visually-hidden">Daily token totals for the last {{ stats.window_days }} days.</figcaption>
+  </figure>
+  <div class="chart-range" aria-hidden="true"><span>{{ stats.window_start|short_date }}</span><span>{{ stats.window_end|short_date }}</span></div>
+</section>

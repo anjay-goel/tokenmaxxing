@@ -23,7 +23,6 @@ def _config(avatar: Path | None = None) -> ProfileConfig:
         version=1,
         profile=ProfileInfo(
             name="Ada Lovelace",
-            role="Programmer",
             bio="Makes machines think.",
             avatar=avatar,
             links=(

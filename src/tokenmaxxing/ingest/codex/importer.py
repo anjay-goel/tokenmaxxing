@@ -108,7 +108,6 @@ def _rediscovered_owners(repository: Repository, path: Path) -> set[str]:
                 (artifact.id,),
             ).fetchall()
         }
-        transaction.execute("UPDATE artifacts SET is_missing = 0 WHERE id = ?", (artifact.id,))
         transaction.execute(
             "UPDATE usage_events SET status = 'provisional' WHERE id IN ("
             "SELECT l.usage_event_id FROM observation_links l "

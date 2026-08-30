@@ -141,13 +141,12 @@ def test_build_profile_data_derives_every_window_metric_from_one_snapshot() -> N
     )
     assert data.peak_usage == 130
     assert data.longest_streak == 2
-    assert data.model_count == 5
+    assert data.model_count == 4
     assert data.models == (
         ModelTotal(model="gpt-5.6-sol", total_tokens=170, provider=None),
         ModelTotal(model="claude-sonnet-4-5", total_tokens=70, provider=None),
-        ModelTotal(model="unidentified-model", total_tokens=7, provider="opencode"),
+        ModelTotal(model="unidentified-model", total_tokens=7, provider=None),
         ModelTotal(model="boundary-model", total_tokens=1, provider=None),
-        ModelTotal(model="zero-model", total_tokens=0, provider=None),
     )
     assert len(data.recent_days) == 28
     assert all(isinstance(day, DailyAgentTotal) for day in data.recent_days)
@@ -190,18 +189,25 @@ def test_build_profile_data_derives_every_window_metric_from_one_snapshot() -> N
     assert data.awards == derive_awards(rows, timezone=KOLKATA)
 
 
-def test_model_provider_uses_positive_token_majority_and_alphabetical_ties() -> None:
+def test_model_provider_canonicalizes_creator_aliases_before_majority() -> None:
     now = datetime(2026, 8, 30, 12, tzinfo=KOLKATA)
     rows = (
         _row(
-            80,
+            40,
             model="majority",
             occurred_at=now,
             agent_key=None,
             provider="openai",
         ),
         _row(
-            20,
+            50,
+            model="majority",
+            occurred_at=now,
+            agent_key=None,
+            provider="openai-codex",
+        ),
+        _row(
+            60,
             model="majority",
             occurred_at=now,
             agent_key=None,
@@ -246,15 +252,14 @@ def test_model_provider_uses_positive_token_majority_and_alphabetical_ties() -> 
     data = build_profile_data(rows, timezone=KOLKATA, now=now, window_days=28)
     providers = {model.model: model.provider for model in data.models}
 
-    assert data.total_tokens == 132
+    assert data.total_tokens == 182
     assert providers == {
         "majority": "openai",
         "tie": "anthropic",
-        "opencode-fallback": "opencode",
+        "opencode-fallback": None,
         "unknown-provider": None,
-        "zero-provider": None,
     }
-    assert data.activity_days[-1].total_tokens == 132
+    assert data.activity_days[-1].total_tokens == 182
     assert {
         model.model: model.provider for model in data.activity_days[-1].models
     } == providers

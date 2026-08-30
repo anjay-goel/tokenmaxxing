@@ -63,7 +63,7 @@ def test_defaults_use_xdg_data_location_for_opencode(
 ) -> None:
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
 
-    assert sync.SourceRoots.defaults(tmp_path).opencode_db == (
+    assert sync.SourceRoots.defaults(tmp_path, platform="linux").opencode_db == (
         tmp_path / "data" / "opencode" / "opencode.db"
     )
 

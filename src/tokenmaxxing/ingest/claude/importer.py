@@ -75,10 +75,6 @@ def _rediscovered_messages(repository: Repository, path: Path) -> set[str]:
             ).fetchall()
         }
         transaction.execute(
-            "UPDATE artifacts SET is_missing = 0 WHERE id = ?",
-            (artifact.id,),
-        )
-        transaction.execute(
             "UPDATE usage_events SET status = 'provisional' WHERE id IN ("
             "SELECT l.usage_event_id FROM observation_links l "
             "JOIN observations o ON o.id = l.observation_id "

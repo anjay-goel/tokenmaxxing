@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from stat import S_IMODE
 
@@ -20,7 +21,8 @@ def test_salt_is_private_and_has_the_required_size(tmp_path: Path) -> None:
     salt = load_or_create_salt(tmp_path / "salt")
 
     assert len(salt) == 32
-    assert S_IMODE((tmp_path / "salt").stat().st_mode) == 0o600
+    if os.name != "nt":
+        assert S_IMODE((tmp_path / "salt").stat().st_mode) == 0o600
 
 
 def test_default_paths_support_portable_platform_locations(tmp_path: Path) -> None:

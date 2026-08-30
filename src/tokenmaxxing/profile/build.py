@@ -21,7 +21,7 @@ from tokenmaxxing.db import Database
 from tokenmaxxing.profile.config import load_config
 from tokenmaxxing.profile.data import build_profile_data
 from tokenmaxxing.profile.project import profile_paths
-from tokenmaxxing.profile.render import render_site
+from tokenmaxxing.profile.render import PROFILE_SOURCE_URL, render_site
 from tokenmaxxing.repository import Repository
 
 
@@ -371,9 +371,9 @@ def _validate_public_payload(payload: JsonValue) -> dict[str, JsonValue]:
     profile = _expect_object(
         root["profile"],
         "profile.json.profile",
-        frozenset({"name", "role", "bio", "avatar", "links"}),
+        frozenset({"name", "bio", "avatar", "links"}),
     )
-    for key in ("name", "role", "bio"):
+    for key in ("name", "bio"):
         _expect_string(profile[key], f"profile.json.profile.{key}")
     _expect_string(profile["avatar"], "profile.json.profile.avatar", nullable=True)
     for index, item in enumerate(_expect_list(profile["links"], "profile.json.profile.links")):
@@ -523,7 +523,7 @@ def _allowed_public_urls(payload: dict[str, JsonValue]) -> frozenset[str]:
     links = profile["links"]
     assert isinstance(links, list)
     return frozenset(
-        [site["canonical_url"]]
+        [site["canonical_url"], PROFILE_SOURCE_URL]
         + [link["url"] for link in links if isinstance(link, dict)]
     )  # type: ignore[list-item]
 
@@ -630,8 +630,8 @@ def _validate_html(
             raise ValueError("noindex build is missing robots metadata")
         if (site_dir / "sitemap.xml").exists():
             raise ValueError("noindex build must not include a sitemap")
-        if robots != "User-agent: *\nDisallow: /\n":
-            raise ValueError("noindex robots.txt must disallow the entire site")
+        if robots != "User-agent: *\nAllow: /\n":
+            raise ValueError("noindex robots.txt must allow crawlers to read metadata")
     else:
         if "index,follow" not in robots_values:
             raise ValueError("indexable build is missing robots metadata")

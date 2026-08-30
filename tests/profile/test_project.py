@@ -13,19 +13,13 @@ from tokenmaxxing.profile.project import (
 )
 
 
-def test_profile_paths_keep_generated_state_separate(tmp_path: Path) -> None:
-    config = tmp_path / "profile" / "tokenmaxxing.yaml"
+def test_profile_paths_put_the_deployable_site_in_dist(tmp_path: Path) -> None:
+    config = tmp_path / "profile" / "config.yaml"
 
     assert profile_paths(config) == ProfilePaths(
         root=config.resolve().parent,
         config=config.resolve(),
-        generated=config.resolve().parent / ".tokenmaxxing",
-        site=config.resolve().parent / ".tokenmaxxing" / "site",
-        build_state=config.resolve().parent / ".tokenmaxxing" / "build.json",
-        deploy_approval=(
-            config.resolve().parent / ".tokenmaxxing" / "deploy-approval.json"
-        ),
-        logs=config.resolve().parent / ".tokenmaxxing" / "logs",
+        site=config.resolve().parent / "dist",
     )
 
 
@@ -34,12 +28,15 @@ def test_initialize_project_creates_only_editable_starters(tmp_path: Path) -> No
 
     config = initialize_project(project, editable_template=False, force=False)
 
-    assert config == project / "tokenmaxxing.yaml"
+    assert config == project / "config.yaml"
+    assert not (project / "tokenmaxxing.yaml").exists()
     assert (project / "custom.css").read_text(encoding="utf-8") == ""
-    assert ".tokenmaxxing/" in (project / ".gitignore").read_text(encoding="utf-8")
+    assert "dist/" in (project / ".gitignore").read_text(encoding="utf-8")
     assert not (project / "template").exists()
     assert not (project / ".tokenmaxxing").exists()
     loaded = load_config(config)
+    assert loaded.site.title == "Your Name | Token Trail"
+    assert loaded.site.description == "A visual snapshot of AI agent usage."
     assert loaded.site.indexable is False
     assert loaded.deploy.command == ()
 
@@ -64,13 +61,13 @@ def test_force_never_overwrites_an_editable_file(tmp_path: Path) -> None:
     initialize_project(project, editable_template=False, force=True)
 
     assert css.read_text(encoding="utf-8") == "body { color: hotpink; }\n"
-    assert (project / "tokenmaxxing.yaml").is_file()
+    assert (project / "config.yaml").is_file()
 
 
 def test_force_preserves_an_existing_config(tmp_path: Path) -> None:
     project = tmp_path / "profile"
     project.mkdir()
-    config = project / "tokenmaxxing.yaml"
+    config = project / "config.yaml"
     config.write_text("personal: formatting\n", encoding="utf-8")
 
     initialize_project(project, editable_template=False, force=True)
@@ -86,7 +83,7 @@ def test_force_rejects_an_editable_template_symlink_outside_the_project(
     packaged = tmp_path / "packaged"
     starters = packaged / "starters"
     starters.mkdir(parents=True)
-    (starters / "tokenmaxxing.yaml").write_text("version: 1\n", encoding="utf-8")
+    (starters / "config.yaml").write_text("version: 1\n", encoding="utf-8")
     (starters / "custom.css").write_text("", encoding="utf-8")
     (starters / "gitignore").write_text(".tokenmaxxing/\n", encoding="utf-8")
     templates = packaged / "templates"
@@ -111,7 +108,7 @@ def test_posix_editor_prefers_visual_and_waits_without_a_shell(
 ) -> None:
     from tokenmaxxing.profile import project
 
-    config = tmp_path / "tokenmaxxing.yaml"
+    config = tmp_path / "config.yaml"
     calls: list[tuple[list[str], bool, bool]] = []
 
     def run(
@@ -137,7 +134,7 @@ def test_windows_editor_parses_a_quoted_program_files_path(
 ) -> None:
     from tokenmaxxing.profile import project
 
-    config = tmp_path / "tokenmaxxing.yaml"
+    config = tmp_path / "config.yaml"
     calls: list[list[str]] = []
 
     def run(
@@ -207,7 +204,7 @@ def test_windows_editor_falls_back_to_notepad(
 ) -> None:
     from tokenmaxxing.profile import project
 
-    config = tmp_path / "tokenmaxxing.yaml"
+    config = tmp_path / "config.yaml"
     calls: list[list[str]] = []
 
     def run(

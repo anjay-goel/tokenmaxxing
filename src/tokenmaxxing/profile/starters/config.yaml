@@ -2,12 +2,11 @@
 version: 1
 profile:
   name: Your Name
-  role: ""
   bio: ""
   links: []
 site:
-  title: My token trail
-  description: Aggregate local AI agent usage.
+  title: Your Name | Token Trail
+  description: A visual snapshot of AI agent usage.
   canonical_url: https://example.com/tokens/
   indexable: false
   timezone: UTC

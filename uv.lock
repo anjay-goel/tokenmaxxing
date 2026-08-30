@@ -244,7 +244,7 @@ wheels = [
 ]
 
 [[package]]
-name = "tokenmaxxing-history"
+name = "tokenmaxxing"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

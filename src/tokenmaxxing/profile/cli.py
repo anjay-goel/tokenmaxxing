@@ -3,22 +3,28 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import shutil
 import sys
 import tempfile
 import webbrowser
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import time
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Thread
 from types import SimpleNamespace
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import tzlocal
 from rich.console import Console
 from rich.prompt import Confirm, Prompt
 
+from tokenmaxxing.config import default_paths
 from tokenmaxxing.db import Database
 from tokenmaxxing.profile.build import BuildResult, build_profile, validate_site
 from tokenmaxxing.profile.config import (
@@ -32,6 +38,7 @@ from tokenmaxxing.profile.config import (
     load_config,
     load_starter_config,
     normalize_canonical_url,
+    remember_config,
     validate_config,
     validate_public_link_url,
     write_initial_config,
@@ -40,7 +47,6 @@ from tokenmaxxing.profile.deploy import (
     DeployError,
     DeployPlan,
     DeployResult,
-    is_approved,
     make_deploy_plan,
     run_deploy,
 )
@@ -60,7 +66,7 @@ _ALL_SOURCES = ("codex", "claude", "pi", "opencode")
 @dataclass(frozen=True, slots=True)
 class _OnboardingResult:
     config: ProfileConfig
-    cloudflare: bool
+    avatar_source: Path | None = None
 
 
 def add_profile_parser(commands: argparse._SubParsersAction) -> None:
@@ -73,7 +79,7 @@ def add_profile_parser(commands: argparse._SubParsersAction) -> None:
     profile.add_argument(
         "--config",
         type=Path,
-        help="configuration file; defaults to tokenmaxxing.yaml in this directory or a parent",
+        help="configuration file; defaults to the nearest or last initialized profile",
     )
     profile_commands = profile.add_subparsers(
         dest="profile_command", required=True
@@ -89,8 +95,7 @@ def add_profile_parser(commands: argparse._SubParsersAction) -> None:
         "directory",
         nargs="?",
         type=Path,
-        default=Path("tokenmaxxing-profile"),
-        help="project directory (default: ./tokenmaxxing-profile)",
+        help="project directory (prompts when omitted; default: ./tokenmaxxing-profile)",
     )
     init.add_argument(
         "--no-setup", action="store_true", help="write starter files without prompting"
@@ -109,7 +114,7 @@ def add_profile_parser(commands: argparse._SubParsersAction) -> None:
     edit = profile_commands.add_parser(
         "edit",
         help="Open and validate profile configuration",
-        description="Open tokenmaxxing.yaml in the configured editor, then validate it.",
+        description="Open config.yaml in the configured editor, then validate it.",
         epilog="Example: tokenmaxxing profile edit --publish",
     )
     edit.add_argument(
@@ -141,7 +146,7 @@ def add_profile_parser(commands: argparse._SubParsersAction) -> None:
     build.add_argument(
         "--output",
         type=Path,
-        help="site directory (default: .tokenmaxxing/site)",
+        help="site directory (default: dist)",
     )
     build.add_argument(
         "--json", action="store_true", help="emit one machine-readable JSON result"
@@ -149,7 +154,7 @@ def add_profile_parser(commands: argparse._SubParsersAction) -> None:
 
     publish = profile_commands.add_parser(
         "publish",
-        help="Build and run the approved deploy command",
+        help="Build and run the deploy command",
         description="Build, validate, and publish using the configured deploy command.",
         epilog="Example: tokenmaxxing profile publish --sync",
     )
@@ -159,7 +164,7 @@ def add_profile_parser(commands: argparse._SubParsersAction) -> None:
     publish.add_argument(
         "--non-interactive",
         action="store_true",
-        help="refuse unless the deploy command has current approval",
+        help="publish without prompting (used by scheduled updates)",
     )
     publish.add_argument(
         "--json", action="store_true", help="emit one machine-readable JSON result"
@@ -168,7 +173,7 @@ def add_profile_parser(commands: argparse._SubParsersAction) -> None:
     status = profile_commands.add_parser(
         "status",
         help="Show profile, deploy, and schedule status",
-        description="Show project paths, deploy approval, and schedule state.",
+        description="Show project paths and schedule state.",
         epilog="Example: tokenmaxxing profile status --json",
     )
     status.add_argument(
@@ -191,7 +196,11 @@ def add_profile_parser(commands: argparse._SubParsersAction) -> None:
 
 def _resolve_config(arguments: argparse.Namespace) -> Path:
     configured = getattr(arguments, "config", None)
-    return configured if configured is not None else discover_config(Path.cwd())
+    return (
+        configured
+        if configured is not None
+        else discover_config(Path.cwd(), default_paths().profile_path)
+    )
 
 
 def _build_payload(result: BuildResult) -> dict[str, object]:
@@ -207,76 +216,51 @@ def _print_json(payload: Mapping[str, object]) -> None:
     print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
 
 
-def _cloudflare_command(
-    *, platform: str = sys.platform, environ: Mapping[str, str] = os.environ
-) -> tuple[str, ...]:
-    if platform != "win32":
-        return ("npx", "wrangler", "deploy", "--assets", "{site_dir}")
-    node = shutil.which("node.exe")
-    launcher = shutil.which("wrangler") or shutil.which("wrangler.cmd")
-    candidates: list[Path] = []
-    if launcher:
-        launcher_path = Path(launcher).resolve()
-        candidates.extend(
-            (
-                launcher_path.parent / "node_modules" / "wrangler" / "bin" / "wrangler.js",
-                launcher_path.parent.parent
-                / "node_modules"
-                / "wrangler"
-                / "bin"
-                / "wrangler.js",
-            )
-        )
-    if appdata := environ.get("APPDATA"):
-        candidates.append(
-            Path(appdata) / "npm" / "node_modules" / "wrangler" / "bin" / "wrangler.js"
-        )
-    script = next((candidate for candidate in candidates if candidate.is_file()), None)
-    if node is None or script is None:
-        return ()
-    return (
-        str(Path(node).resolve()),
-        str(script.resolve()),
-        "deploy",
-        "--assets",
-        "{site_dir}",
-    )
+def _prompt_text(label: str, default: str) -> str:
+    return Prompt.ask(label, default=default, show_default=bool(default))
+
+
+def _prompt_link(label: str) -> ProfileLink | None:
+    while True:
+        url = _prompt_text(f"{label} URL (optional)", "")
+        if not url:
+            return None
+        try:
+            url = validate_public_link_url(url, f"{label} URL")
+            if urlsplit(url).scheme != "https":
+                raise ValueError(f"{label} URL must use https")
+        except ValueError as error:
+            print(f"{error}. Try again.", file=sys.stderr)
+            continue
+        parsed = urlsplit(url)
+        path_parts = tuple(part for part in parsed.path.split("/") if part)
+        if label == "Website":
+            value = parsed.netloc.removeprefix("www.")
+        elif path_parts:
+            value = path_parts[-1]
+        else:
+            value = parsed.netloc
+        return ProfileLink(label=label, value=value, url=url)
 
 
 def _prompt_links() -> tuple[ProfileLink, ...]:
     links: list[ProfileLink] = []
-    while label := Prompt.ask("Link label (blank to finish)", default=""):
-        value = Prompt.ask("Link text")
-        while True:
-            url = Prompt.ask("Link URL")
-            try:
-                url = validate_public_link_url(url, "Link URL")
-            except ValueError as error:
-                print(f"{error}. Try again.", file=sys.stderr)
-                continue
-            break
-        links.append(
-            ProfileLink(
-                label=label,
-                value=value,
-                url=url,
-            )
-        )
+    for label in ("LinkedIn", "GitHub", "Website"):
+        if link := _prompt_link(label):
+            links.append(link)
     return tuple(links)
 
 
-def _prompt_timezone(default: str) -> ZoneInfo:
-    while True:
-        value = Prompt.ask("Timezone", default=default)
-        try:
-            return ZoneInfo(value)
-        except ZoneInfoNotFoundError:
-            print("Timezone must be an IANA name. Try again.", file=sys.stderr)
+def _system_timezone() -> ZoneInfo:
+    try:
+        return ZoneInfo(tzlocal.get_localzone_name())
+    except (OSError, ValueError, ZoneInfoNotFoundError):
+        return ZoneInfo("UTC")
 
 
 def _prompt_schedule_time(default: str) -> time:
     while True:
-        value = Prompt.ask("Daily publish time", default=default)
+        value = _prompt_text("Daily publish time", default)
         try:
             parsed = time.fromisoformat(value)
         except ValueError:
@@ -286,94 +270,88 @@ def _prompt_schedule_time(default: str) -> time:
         print("Daily publish time must use HH:MM. Try again.", file=sys.stderr)
 
 
+def _prompt_deploy_command() -> tuple[str, ...]:
+    while True:
+        value = _prompt_text(
+            "Deployment command (optional; {site_dir} is available when needed)",
+            "",
+        )
+        if not value:
+            return ()
+        try:
+            command = tuple(shlex.split(value))
+        except ValueError:
+            print("Deployment command has invalid quoting. Try again.", file=sys.stderr)
+            continue
+        if command:
+            return command
+
+
 def _prompt_canonical_url(default: str) -> str:
     while True:
-        value = Prompt.ask("Public profile URL", default=default)
+        value = _prompt_text("Public profile URL", default)
         try:
             return normalize_canonical_url(value, "Public profile URL")
         except ValueError as error:
             print(f"{error}. Try again.", file=sys.stderr)
 
 
-def _prompt_avatar(path: Path) -> Path | None:
+def _prompt_avatar() -> Path | None:
     while True:
-        value = Prompt.ask("Avatar path inside this project", default="")
+        value = _prompt_text("Avatar path (optional)", "")
         if not value:
             return None
-        avatar = (path.parent / value).resolve()
-        if avatar.is_relative_to(path.parent.resolve()):
+        avatar = Path(value).expanduser().resolve()
+        if avatar.is_file():
             return avatar
-        print("Avatar path must stay inside this project. Try again.", file=sys.stderr)
+        print("Avatar must be a readable file. Try again.", file=sys.stderr)
+
+
+def _avatar_target(project: Path, source: Path | None) -> Path | None:
+    if source is None:
+        return None
+    suffix = source.suffix.lower()
+    if not suffix or not suffix[1:].isalnum() or len(suffix) > 9:
+        suffix = ".image"
+    target = project / f"avatar{suffix}"
+    number = 2
+    while target.exists():
+        target = project / f"avatar-{number}{suffix}"
+        number += 1
+    return target.resolve()
 
 
 def _interactive_config(path: Path, starter: ProfileConfig) -> _OnboardingResult:
-    name = Prompt.ask("Name", default=starter.profile.name)
-    role = Prompt.ask("Role", default=starter.profile.role)
-    bio = Prompt.ask("Bio", default=starter.profile.bio)
-    avatar = _prompt_avatar(path)
+    name = _prompt_text("Name", starter.profile.name)
+    bio = _prompt_text("Bio", starter.profile.bio)
+    avatar_source = _prompt_avatar()
+    avatar = _avatar_target(path.parent, avatar_source)
     links = _prompt_links()
     canonical_url = _prompt_canonical_url(starter.site.canonical_url)
-    timezone = _prompt_timezone(starter.site.timezone.key)
-    schedule_time = _prompt_schedule_time(
-        starter.schedule.time.strftime("%H:%M")
+    timezone = _system_timezone()
+    configured = replace(
+        starter,
+        profile=ProfileInfo(
+            name=name,
+            bio=bio,
+            avatar=avatar,
+            links=links,
+        ),
+        site=SiteConfig(
+            title=f"{name} | Token Trail",
+            description=starter.site.description,
+            canonical_url=canonical_url,
+            indexable=True,
+            timezone=timezone,
+            theme=starter.site.theme,
+            accent=starter.site.accent,
+        ),
+        deploy=DeployConfig(command=()),
     )
-    while True:
-        mode = Prompt.ask(
-            "Deployment",
-            choices=("cloudflare", "custom", "none"),
-            default="none",
-        )
-        command: tuple[str, ...] = ()
-        if mode == "cloudflare":
-            command = _cloudflare_command()
-            if not command:
-                print(
-                    "Cloudflare needs native node.exe and Wrangler JS paths on Windows; deployment left unset.",
-                    file=sys.stderr,
-                )
-        elif mode == "custom":
-            values: list[str] = []
-            while value := Prompt.ask("Command argument (blank to finish)", default=""):
-                values.append(value)
-            command = tuple(values)
-        configured = replace(
-            starter,
-            profile=ProfileInfo(
-                name=name,
-                role=role,
-                bio=bio,
-                avatar=avatar,
-                links=links,
-            ),
-            site=SiteConfig(
-                title=f"{name}'s token trail",
-                description=starter.site.description,
-                canonical_url=canonical_url,
-                indexable=starter.site.indexable,
-                timezone=timezone,
-                theme=starter.site.theme,
-                accent=starter.site.accent,
-            ),
-            deploy=DeployConfig(command=command),
-            schedule=ScheduleConfig(time=schedule_time),
-        )
-        try:
-            configured = validate_config(path, configured)
-        except ValueError as error:
-            print(f"Deployment configuration is invalid: {error}. Try again.", file=sys.stderr)
-            continue
-        return _OnboardingResult(configured, mode == "cloudflare" and bool(command))
-
-
-def _write_cloudflare_config(path: Path) -> None:
-    try:
-        with path.open("x", encoding="utf-8", newline="") as output:
-            output.write(
-                '{\n  "name": "tokenmaxxing-profile",\n'
-                '  "assets": {"directory": ".tokenmaxxing/site"}\n}\n'
-            )
-    except FileExistsError:
-        pass
+    return _OnboardingResult(
+        config=validate_config(path, configured),
+        avatar_source=avatar_source,
+    )
 
 
 def _check_init_destination(directory: Path, *, force: bool) -> None:
@@ -387,29 +365,124 @@ def _check_init_destination(directory: Path, *, force: bool) -> None:
         )
 
 
+@contextmanager
+def _onboarding_preview(
+    site_dir: Path,
+    *,
+    server_factory: Callable[..., object] = ThreadingHTTPServer,
+    browser_open: Callable[[str], bool] = webbrowser.open,
+) -> Iterator[None]:
+    handler = partial(_QuietHandler, directory=str(site_dir))
+    with server_factory(("127.0.0.1", 0), handler) as server:
+        thread = Thread(
+            target=server.serve_forever,
+            kwargs={"poll_interval": 0.2},
+            daemon=True,
+        )
+        thread.start()
+        url = f"http://127.0.0.1:{server.server_port}/"
+        print(f"Preview: {url}")
+        browser_open(url)
+        try:
+            yield
+        finally:
+            server.shutdown()
+            thread.join()
+
+
+def _configure_deployment(config_path: Path, config: ProfileConfig) -> ProfileConfig:
+    while True:
+        configured = replace(
+            config,
+            deploy=DeployConfig(command=_prompt_deploy_command()),
+        )
+        try:
+            return validate_config(config_path, configured)
+        except ValueError as error:
+            print(f"Deployment configuration is invalid: {error}. Try again.", file=sys.stderr)
+
+
+def _finish_onboarding(
+    arguments: argparse.Namespace,
+    config_path: Path,
+    config: ProfileConfig,
+) -> None:
+    if not Confirm.ask("Sync, build, and preview now?", default=True):
+        print("Run `tokenmaxxing profile preview` when ready.")
+        return
+    _sync_profile_sources(arguments.db, debug=arguments.debug)
+    result = build_profile(config_path, db_path=arguments.db)
+    print(f"Built profile: {result.site_dir}")
+    with _onboarding_preview(result.site_dir):
+        config = _configure_deployment(config_path, config)
+        write_initial_config(config_path, config)
+        publish_now = bool(config.deploy.command) and Confirm.ask(
+            "Publish this profile?", default=True
+        )
+    if not config.deploy.command:
+        return
+    if not publish_now:
+        print("Run `tokenmaxxing profile publish` when ready.")
+        return
+    publish_arguments = argparse.Namespace(
+        **{
+            **vars(arguments),
+            "sync": False,
+            "non_interactive": True,
+            "json": False,
+        }
+    )
+    _publish(publish_arguments, config_path)
+    if Confirm.ask("Enable daily publishing?", default=True):
+        schedule_time = _prompt_schedule_time(
+            config.schedule.time.strftime("%H:%M")
+        )
+        config = validate_config(
+            config_path,
+            replace(config, schedule=ScheduleConfig(time=schedule_time)),
+        )
+        write_initial_config(config_path, config)
+        schedule_arguments = argparse.Namespace(
+            **{**vars(arguments), "action": "enable"}
+        )
+        _schedule(schedule_arguments, config_path)
+    else:
+        print("Run `tokenmaxxing profile schedule enable` when ready.")
+
+
 def _initialize(arguments: argparse.Namespace) -> int:
     if getattr(arguments, "config", None) is not None:
         raise ValueError("--config cannot be used with profile init")
-    config_path = arguments.directory / "tokenmaxxing.yaml"
+    directory = arguments.directory
+    if directory is None:
+        directory = Path(
+            Prompt.ask("Profile directory", default="./tokenmaxxing-profile")
+        ).expanduser()
+    config_path = directory / "config.yaml"
     config_existed = config_path.exists()
-    _check_init_destination(arguments.directory, force=arguments.force)
+    _check_init_destination(directory, force=arguments.force)
     onboarding: _OnboardingResult | None = None
     if not arguments.no_setup and not config_existed:
         onboarding = _interactive_config(
             config_path, load_starter_config(config_path)
         )
     config_path = initialize_project(
-        arguments.directory,
+        directory,
         editable_template=arguments.editable_template,
         force=arguments.force,
     )
     if onboarding is not None:
+        avatar = onboarding.config.profile.avatar
+        if onboarding.avatar_source is not None and avatar is not None:
+            with onboarding.avatar_source.open("rb") as source, avatar.open("xb") as target:
+                shutil.copyfileobj(source, target)
         write_initial_config(config_path, onboarding.config)
-        if onboarding.cloudflare:
-            _write_cloudflare_config(config_path.parent / "wrangler.jsonc")
-        load_config(config_path)
-        print("Run `tokenmaxxing profile schedule enable` after your first approved publish.")
-    print(f"Profile project → {config_path}")
+    load_config(config_path)
+    remember_config(config_path, default_paths().profile_path)
+    print(f"Profile created: {directory.resolve()}")
+    print(f"Config: {config_path.resolve()}")
+    if onboarding is not None:
+        _finish_onboarding(arguments, config_path, onboarding.config)
     return 0
 
 
@@ -473,7 +546,6 @@ def _publish(arguments: argparse.Namespace, config_path: Path | None = None) -> 
     try:
         deployed = run_deploy(
             plan,
-            approval_path=paths.deploy_approval,
             non_interactive=arguments.non_interactive,
             confirm=_confirm_deploy,
         )
@@ -596,13 +668,14 @@ def _disable_schedule(paths: ProfilePaths):
     )
 
 
-def _schedule_payload(status: object) -> dict[str, object]:
+def _schedule_payload(status: object, configured_time: time) -> dict[str, object]:
     return {
         "backend": status.backend,
         "command": list(status.command),
         "enabled": status.enabled,
         "job_path": str(status.job_path) if status.job_path is not None else None,
         "next_step": status.next_step,
+        "time": configured_time.strftime("%H:%M"),
     }
 
 
@@ -623,23 +696,11 @@ def _status_payload(config_path: Path, db_path: Path) -> dict[str, object]:
     del db_path
     config = load_config(config_path)
     paths = profile_paths(config_path)
-    if not config.deploy.command:
-        approval = "unconfigured"
-    elif not paths.deploy_approval.is_file():
-        approval = "missing"
-    else:
-        try:
-            plan = make_deploy_plan(config, paths)
-        except (FileNotFoundError, ValueError):
-            approval = "stale"
-        else:
-            approval = "current" if is_approved(plan, paths.deploy_approval) else "stale"
     schedule = _scheduler_status_or_unavailable(paths)
     return {
-        "approval": approval,
         "canonical_url": config.site.canonical_url,
         "config": str(paths.config),
-        "schedule": _schedule_payload(schedule),
+        "schedule": _schedule_payload(schedule, config.schedule.time),
         "site": str(paths.site) if paths.site.is_dir() else None,
     }
 
@@ -655,15 +716,20 @@ def _status(arguments: argparse.Namespace, config_path: Path) -> int:
             print(f"Site: {payload['site']}")
         else:
             print(f"Site: not built (expected: {profile_paths(config_path).site})")
-        print(f"Deploy approval: {payload['approval']}")
         schedule = payload["schedule"]
         assert isinstance(schedule, dict)
-        print(
-            f"Schedule: {'enabled' if schedule['enabled'] else 'disabled'} "
-            f"({schedule['backend']})"
-        )
+        if schedule["enabled"]:
+            print(
+                f"Daily publishing: enabled at {schedule['time']} "
+                f"({schedule['backend']})"
+            )
+        else:
+            print(f"Daily publishing: disabled ({schedule['backend']})")
+            print(f"Preferred time: {schedule['time']}")
         if schedule["next_step"]:
             print(schedule["next_step"])
+        elif not schedule["enabled"]:
+            print("Enable: tokenmaxxing profile schedule enable")
     return 0
 
 

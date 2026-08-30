@@ -205,7 +205,7 @@ git commit -m "refactor: share usage presentation helpers"
 - Create: `src/tokenmaxxing/profile/__init__.py`
 - Create: `src/tokenmaxxing/profile/config.py`
 - Create: `src/tokenmaxxing/profile/project.py`
-- Create: `src/tokenmaxxing/profile/starters/tokenmaxxing.yaml`
+- Create: `src/tokenmaxxing/profile/starters/config.yaml`
 - Create: `src/tokenmaxxing/profile/starters/custom.css`
 - Create: `src/tokenmaxxing/profile/starters/gitignore`
 - Create: `src/tokenmaxxing/profile/starters/wrangler.jsonc`
@@ -289,7 +289,7 @@ schedule:
 
 @pytest.fixture
 def profile_config_path(tmp_path: Path) -> Path:
-    path = tmp_path / "tokenmaxxing.yaml"
+    path = tmp_path / "config.yaml"
     path.write_text(MINIMAL_CONFIG, encoding="utf-8")
     (tmp_path / "avatar.webp").write_bytes(b"avatar")
     return path
@@ -297,21 +297,21 @@ def profile_config_path(tmp_path: Path) -> Path:
 
 ```python
 def test_load_config_rejects_unknown_keys(tmp_path: Path) -> None:
-    path = tmp_path / "tokenmaxxing.yaml"
+    path = tmp_path / "config.yaml"
     path.write_text("version: 1\nprofile:\n  name: Ada\n  typo: true\n")
     with pytest.raises(ValueError, match="profile.typo"):
         load_config(path)
 
 
 def test_load_config_rejects_assets_outside_project(tmp_path: Path) -> None:
-    path = tmp_path / "tokenmaxxing.yaml"
+    path = tmp_path / "config.yaml"
     path.write_text(MINIMAL_CONFIG.replace("avatar: avatar.webp", "avatar: ../avatar.webp"))
     with pytest.raises(ValueError, match="inside the profile project"):
         load_config(path)
 
 
 def test_discover_config_walks_parents(tmp_path: Path) -> None:
-    config = tmp_path / "tokenmaxxing.yaml"
+    config = tmp_path / "config.yaml"
     config.write_text(MINIMAL_CONFIG)
     child = tmp_path / "one" / "two"
     child.mkdir(parents=True)
@@ -415,7 +415,7 @@ is used only by initialization, never by `profile edit`.
 def test_initialize_project_creates_only_editable_starters(tmp_path: Path) -> None:
     project = tmp_path / "profile"
     config = initialize_project(project, editable_template=False, force=False)
-    assert config == project / "tokenmaxxing.yaml"
+    assert config == project / "config.yaml"
     assert (project / "custom.css").read_text() == ""
     assert ".tokenmaxxing/" in (project / ".gitignore").read_text()
     assert not (project / "template").exists()
@@ -855,10 +855,10 @@ def public_payload(config: ProfileConfig, data: ProfileData) -> dict[str, JsonVa
 Extend `ModelTotal` with `provider: str | None` and choose the provider that
 contributes the most tokens to that resolved model in the same window, then
 alphabetically on ties. This provider is public aggregate categorization, not a
-private identifier. Use canonical stored provider IDs to select icons; do not
-guess from arbitrary model-name prefixes. Map `openai`, `anthropic`, `google`,
-`deepseek`, `zai`, `kimi`, `xai`, `mistral`, and `dashscope`, with source-level
-OpenCode and a neutral CSS fallback for unknown providers.
+private identifier. Canonicalize known model creators before selecting the
+token-majority provider. Treat hosts and harnesses as neutral, then use
+conservative, boundary-anchored model-family matching only when creator metadata
+is absent. Keep explicit unknown models neutral. Select harness icons separately.
 
 - [ ] **Step 4: Refactor the saved snapshot into templates and assets**
 
@@ -954,7 +954,7 @@ Define the local test helpers in `test_build.py`:
 
 ```python
 def prepared_project(tmp_path: Path) -> ProfilePaths:
-    config = tmp_path / "tokenmaxxing.yaml"
+    config = tmp_path / "config.yaml"
     config.write_text(MINIMAL_CONFIG, encoding="utf-8")
     (tmp_path / "avatar.webp").write_bytes(b"avatar")
     return profile_paths(config)
@@ -1254,8 +1254,8 @@ def launch_agent_path(paths: ProfilePaths, home: Path) -> Path:
 ```python
 def test_launch_agent_uses_absolute_noninteractive_command(tmp_path) -> None:
     status = enable_schedule(
-        paths=profile_paths(tmp_path / "tokenmaxxing.yaml"),
-        config=config_at(tmp_path / "tokenmaxxing.yaml", "09:00"),
+        paths=profile_paths(tmp_path / "config.yaml"),
+        config=config_at(tmp_path / "config.yaml", "09:00"),
         executable=tmp_path / "bin" / "tokenmaxxing",
         db_path=tmp_path / "usage.sqlite3",
         platform="darwin",
@@ -1267,7 +1267,7 @@ def test_launch_agent_uses_absolute_noninteractive_command(tmp_path) -> None:
 
 
 def test_disable_refuses_a_foreign_job(tmp_path) -> None:
-    paths = profile_paths(tmp_path / "tokenmaxxing.yaml")
+    paths = profile_paths(tmp_path / "config.yaml")
     job = launch_agent_path(paths, tmp_path)
     job.parent.mkdir(parents=True)
     job.write_text("foreign")
@@ -1375,7 +1375,7 @@ real sources, browsers, deploy tools, or schedulers:
 
 ```python
 def initialized_profile(tmp_path: Path) -> Path:
-    config = tmp_path / "profile" / "tokenmaxxing.yaml"
+    config = tmp_path / "profile" / "config.yaml"
     config.parent.mkdir()
     config.write_text(MINIMAL_CONFIG, encoding="utf-8")
     (config.parent / "avatar.webp").write_bytes(b"avatar")
@@ -1481,7 +1481,7 @@ schedule = profile_commands.add_parser("schedule")
 schedule.add_argument("action", nargs="?", choices=("enable", "disable", "status"))
 ```
 
-Add a root `--version` using `importlib.metadata.version("tokenmaxxing-history")`.
+Add a root `--version` using `importlib.metadata.version("tokenmaxxing")`.
 
 - [ ] **Step 4: Implement concise handlers and local preview**
 
@@ -1668,8 +1668,8 @@ verify no database, salt, WAL, SHM, generated site, local profile YAML, or
 - [ ] **Step 6: Run a real local end-to-end build against the ignored database**
 
 ```bash
-uv run tokenmaxxing --db data/tokenmaxxing.sqlite3 profile --config /Users/anjay/Documents/tokenmaxxing-profile-v0/tokenmaxxing.yaml build
-uv run tokenmaxxing --db data/tokenmaxxing.sqlite3 profile --config /Users/anjay/Documents/tokenmaxxing-profile-v0/tokenmaxxing.yaml status
+uv run tokenmaxxing --db data/tokenmaxxing.sqlite3 profile --config /Users/anjay/Documents/tokenmaxxing-profile-v0/config.yaml build
+uv run tokenmaxxing --db data/tokenmaxxing.sqlite3 profile --config /Users/anjay/Documents/tokenmaxxing-profile-v0/config.yaml status
 ```
 
 If the saved project predates YAML, initialize its YAML and assets without

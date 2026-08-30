@@ -54,9 +54,9 @@ _QUIPS = (
     (100_000, "Just a light snack."),
     (1_000_000, "A tidy little token trail."),
     (10_000_000, "The agents are stretching their legs."),
-    (100_000_000, "Your autocomplete has a work ethic."),
-    (1_000_000_000, "You may have accidentally hired a small team."),
-    (10_000_000_000, "You didn't use AI. You employed a small civilization."),
+    (100_000_000, "Autocomplete has been promoted to middle management."),
+    (1_000_000_000, "The agents have started holding stand-ups."),
+    (10_000_000_000, "A small civilization has entered the context window."),
 )
 
 
@@ -66,4 +66,4 @@ def usage_quip(tokens: int) -> str:
     for upper_bound, copy in _QUIPS:
         if tokens < upper_bound:
             return copy
-    return "The tokens have unionized."
+    return "The context window now has a GDP."

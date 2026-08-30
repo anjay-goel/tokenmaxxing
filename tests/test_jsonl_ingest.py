@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -62,6 +63,42 @@ def test_fresh_read_repeat_and_append_are_incremental(
     appended = scanner(path, appended_lines)
     assert [line.ordinal for line in appended_lines] == [1]
     assert appended.lines_read == 1
+
+
+def test_unsigned_windows_file_ids_fit_sqlite_and_remain_incremental(
+    tmp_path: Path,
+    repository: Repository,
+    scanner: Callable[[Path, list[SourceLine]], object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "session.jsonl"
+    path.write_bytes(b'{"type":"one"}\n')
+    real_stat = Path.stat
+
+    def windows_stat(candidate: Path, *args, **kwargs):
+        details = real_stat(candidate, *args, **kwargs)
+        if candidate != path:
+            return details
+        return SimpleNamespace(
+            st_dev=2**63 + 5,
+            st_ino=2**64 - 2,
+            st_size=details.st_size,
+            st_mtime_ns=details.st_mtime_ns,
+        )
+
+    monkeypatch.setattr(Path, "stat", windows_stat)
+
+    first_lines: list[SourceLine] = []
+    scanner(path, first_lines)
+    repeated_lines: list[SourceLine] = []
+    repeated = scanner(path, repeated_lines)
+
+    stored = repository.connection.execute(
+        "SELECT device, inode FROM artifacts"
+    ).fetchone()
+    assert stored == (-9223372036854775803, -2)
+    assert repeated_lines == []
+    assert repeated.lines_read == 0
 
 
 def test_partial_line_waits_for_newline(
@@ -157,6 +194,28 @@ def test_header_and_inode_replacement_start_a_new_generation(
 
     assert [line.generation for line in replacement_lines] == [1]
     assert replacement_lines[0].artifact_id != first_lines[0].artifact_id
+
+
+def test_rediscovered_artifact_starts_a_new_generation_even_with_same_identity(
+    tmp_path: Path,
+    repository: Repository,
+    scanner: Callable[[Path, list[SourceLine]], object],
+) -> None:
+    path = tmp_path / "session.jsonl"
+    path.write_bytes(b'{"type":"one"}\n')
+    initial_lines: list[SourceLine] = []
+    scanner(path, initial_lines)
+    repository.connection.execute(
+        "UPDATE artifacts SET is_missing = 1 WHERE id = ?",
+        (initial_lines[0].artifact_id,),
+    )
+
+    rediscovered_lines: list[SourceLine] = []
+    rediscovered = scanner(path, rediscovered_lines)
+
+    assert rediscovered.lines_read == 1
+    assert [line.generation for line in rediscovered_lines] == [1]
+    assert rediscovered_lines[0].artifact_id != initial_lines[0].artifact_id
 
 
 def test_rename_and_copy_reparse_as_distinct_artifacts_without_duplicate_semantic_projection(

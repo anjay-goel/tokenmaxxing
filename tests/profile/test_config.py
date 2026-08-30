@@ -1,3 +1,4 @@
+import re
 from dataclasses import FrozenInstanceError, replace
 from datetime import datetime, time
 from pathlib import Path
@@ -23,7 +24,7 @@ from tokenmaxxing.profile.render import render_site
 
 
 def _write_config(tmp_path: Path, text: str) -> Path:
-    path = tmp_path / "tokenmaxxing.yaml"
+    path = tmp_path / "config.yaml"
     path.write_text(text, encoding="utf-8")
     return path
 
@@ -35,7 +36,7 @@ def test_load_config_returns_immutable_typed_values(profile_config_path: Path) -
         version=1,
         profile=ProfileInfo(
             name="Ada Lovelace",
-            role="Programmer",
+            bio="Programmer",
             avatar=(profile_config_path.parent / "avatar.webp").resolve(),
         ),
         site=SiteConfig(
@@ -51,6 +52,18 @@ def test_load_config_returns_immutable_typed_values(profile_config_path: Path) -
     )
     with pytest.raises(FrozenInstanceError):
         config.profile.name = "Grace Hopper"  # type: ignore[misc]
+
+
+def test_profile_schema_rejects_removed_role_field(
+    tmp_path: Path, minimal_config: str
+) -> None:
+    path = _write_config(
+        tmp_path,
+        minimal_config.replace("  name: Ada Lovelace", "  name: Ada Lovelace\n  role: Programmer"),
+    )
+
+    with pytest.raises(ValueError, match=r"unknown configuration key: profile\.role"):
+        load_config(path)
 
 
 def test_canonical_url_normalizes_a_subpath_for_assets_and_sitemap(
@@ -82,7 +95,7 @@ def test_canonical_url_normalizes_a_subpath_for_assets_and_sitemap(
 
     html = (destination / "index.html").read_text(encoding="utf-8")
     assert config.site.canonical_url == "https://example.com/tokens/"
-    assert 'href="assets/profile.css"' in html
+    assert re.search(r'href="assets/profile\.css\?v=\d+"', html)
     assert (
         destination / "robots.txt"
     ).read_text(encoding="utf-8") == (
@@ -219,7 +232,6 @@ def test_load_config_requires_positive_integer_window_days(
             "window_days: 28\n  show_models: null",
             r"metrics\.show_models",
         ),
-        ("role: Programmer", "role: null", r"profile\.role"),
         ("theme: auto", "theme: null", r"site\.theme"),
         ('time: "09:00"', "time: null", r"schedule\.time"),
         (
@@ -349,7 +361,7 @@ def test_load_config_rejects_symlinks_escaping_project(
     project = tmp_path / "project"
     project.mkdir()
     (project / "avatar.webp").symlink_to(outside)
-    path = project / "tokenmaxxing.yaml"
+    path = project / "config.yaml"
     path.write_text(minimal_config, encoding="utf-8")
 
     with pytest.raises(ValueError, match="inside the profile project"):
@@ -365,17 +377,25 @@ def test_discover_config_walks_parents(tmp_path: Path, minimal_config: str) -> N
 
 
 def test_discover_config_reports_when_no_project_exists(tmp_path: Path) -> None:
-    with pytest.raises(FileNotFoundError, match="tokenmaxxing.yaml"):
+    with pytest.raises(FileNotFoundError, match="config.yaml"):
+        discover_config(tmp_path)
+
+
+def test_discover_config_does_not_support_the_old_default_name(
+    tmp_path: Path, minimal_config: str
+) -> None:
+    (tmp_path / "tokenmaxxing.yaml").write_text(minimal_config, encoding="utf-8")
+
+    with pytest.raises(FileNotFoundError, match="config.yaml"):
         discover_config(tmp_path)
 
 
 def test_write_initial_config_round_trips_explicit_values(tmp_path: Path) -> None:
-    path = tmp_path / "tokenmaxxing.yaml"
+    path = tmp_path / "config.yaml"
     config = ProfileConfig(
         version=1,
         profile=ProfileInfo(
             name="Ada Lovelace",
-            role="Programmer",
             bio="First programmer.",
             links=(
                 ProfileLink("Website", "example.com", "https://example.com"),

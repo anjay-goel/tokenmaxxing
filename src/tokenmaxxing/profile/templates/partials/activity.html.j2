@@ -1,5 +1,5 @@
 <section class="content-section" aria-labelledby="activity-title">
-  <div class="section-heading"><h2 id="activity-title">Activity</h2></div>
+  <div class="section-heading"><h2 id="activity-title">Token Trail</h2><span class="section-summary"><strong class="tracked-total">{{ activity_tokens }}</strong> tracked tokens</span></div>
   <div class="activity-grid" data-roving="activity" aria-label="Daily token activity">
     {% set focus = namespace(assigned=false) %}
     {% for day in stats.activity %}

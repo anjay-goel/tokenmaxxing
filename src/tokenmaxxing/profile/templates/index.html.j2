@@ -16,9 +16,9 @@
     <meta name="twitter:description" content="{{ site.description }}">
     <script type="application/ld+json">{{ structured_data }}</script>{% endif %}
     <title>{{ site.title }}</title>
-    <script src="assets/profile.js" defer></script>
-    <link rel="stylesheet" href="assets/profile.css">
-    {% if has_custom_css %}<link rel="stylesheet" href="assets/custom.css">{% endif %}
+    <script src="assets/profile.js?v={{ asset_version }}" defer></script>
+    <link rel="stylesheet" href="assets/profile.css?v={{ asset_version }}">
+    {% if has_custom_css %}<link rel="stylesheet" href="assets/custom.css?v={{ asset_version }}">{% endif %}
   </head>
   <body data-total-tokens="{{ stats.total_tokens }}" data-all-time-tokens="{{ stats.all_time_tokens }}">
     <a class="skip-link" href="#usage-title">Skip to usage</a>
@@ -33,15 +33,17 @@
         {% include "partials/header.html.j2" %}
         <div class="profile-main">
           <section class="usage" aria-labelledby="usage-title">
-            <h1 id="usage-title"><strong>{{ stats.total_tokens|tokens }}</strong> <span class="usage-label">Tokens<small>in last {{ stats.window_days }} days</small></span></h1>
+            <h1 id="usage-title"><strong>{{ stats.total_tokens|tokens }}</strong> <span class="usage-label">Tokens in last {{ stats.window_days }} days</span></h1>
             <p class="quip">{{ stats.quip }}</p>
             <dl class="status-grid">
               {% for card in stats.cards %}<div{% if card.label == "API equivalent" %} class="status-highlight"{% endif %}><dt>{{ card.label }}</dt><dd>{{ card.value }}</dd></div>{% endfor %}
             </dl>
           </section>
           {% include "partials/activity.html.j2" %}
+          {% include "partials/trend.html.j2" %}
           {% include "partials/agents.html.j2" %}
           {% include "partials/models.html.j2" %}
+          <footer class="site-attribution">Generated with <a href="{{ source_url }}" rel="noopener noreferrer">tokenmaxxing</a></footer>
         </div>
       </main>
     </div>

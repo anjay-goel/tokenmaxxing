@@ -59,7 +59,6 @@ def _rediscovered_events(repository: Repository, path: Path) -> set[str]:
         return set()
     event_keys = _artifact_event_keys(repository, artifact.id)
     with repository.transaction() as transaction:
-        transaction.execute("UPDATE artifacts SET is_missing = 0 WHERE id = ?", (artifact.id,))
         transaction.executemany(
             "UPDATE usage_events SET status = 'provisional' "
             "WHERE source = 'pi' AND event_key = ?",

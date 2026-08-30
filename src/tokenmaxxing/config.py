@@ -12,6 +12,7 @@ class AppPaths:
     data_dir: Path
     db_path: Path
     salt_path: Path
+    profile_path: Path
 
 
 def default_paths(
@@ -41,6 +42,7 @@ def default_paths(
         data_dir=data_dir,
         db_path=data_dir / "tokenmaxxing.sqlite3",
         salt_path=data_dir / "salt",
+        profile_path=data_dir / "profile",
     )
 
 

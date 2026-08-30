@@ -1,8 +1,0 @@
-{
-  "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "tokenmaxxing-profile",
-  "compatibility_date": "2026-08-30",
-  "assets": {
-    "directory": ".tokenmaxxing/site"
-  }
-}

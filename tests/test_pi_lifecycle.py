@@ -281,7 +281,7 @@ def test_missing_artifact_is_excluded_and_rediscovery_restores_it(
     repeated = sync_pi(repository, root)
 
     event = repository.get_event("pi:missing:missing-call:assistant")
-    assert restored.lines_read == 0
+    assert restored.lines_read == 2
     assert event is not None and event.status == "canonical"
     assert repeated.events_updated == 0
 

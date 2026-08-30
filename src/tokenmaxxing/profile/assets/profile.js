@@ -54,16 +54,64 @@
       });
     });
 
+    function splitTooltipLine(line) {
+      const marker = " · ";
+      const index = line.lastIndexOf(marker);
+      return index < 0 ? [line, ""] : [line.slice(0, index), line.slice(index + marker.length)];
+    }
+
+    function formatTooltipDate(value) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+      return new Date(`${value}T00:00:00Z`).toLocaleDateString(undefined, {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+        timeZone: "UTC",
+      });
+    }
+
+    function populateTooltip(value) {
+      if (!tooltip) return;
+      const [headline, ...details] = value.split("\n");
+      const [titleText, totalText] = splitTooltipLine(headline);
+      tooltip.replaceChildren();
+
+      const title = document.createElement("strong");
+      title.className = "chart-tooltip-title";
+      title.textContent = formatTooltipDate(titleText);
+      tooltip.append(title);
+
+      const total = document.createElement("span");
+      total.className = "chart-tooltip-total";
+      total.textContent = totalText;
+      tooltip.append(total);
+
+      if (!details.length) return;
+      const breakdown = document.createElement("dl");
+      breakdown.className = "chart-tooltip-breakdown";
+      details.forEach((line) => {
+        const [name, amount] = splitTooltipLine(line);
+        const term = document.createElement("dt");
+        const description = document.createElement("dd");
+        term.textContent = name;
+        description.textContent = amount;
+        breakdown.append(term, description);
+      });
+      tooltip.append(breakdown);
+    }
+
     function positionTooltip(target) {
       if (!tooltip || !target.dataset.tooltip) return;
-      tooltip.textContent = target.dataset.tooltip;
+      populateTooltip(target.dataset.tooltip);
       tooltip.hidden = false;
       const targetBox = target.getBoundingClientRect();
       const box = tooltip.getBoundingClientRect();
       const left = Math.min(window.innerWidth - box.width - 8, Math.max(8, targetBox.left + targetBox.width / 2 - box.width / 2));
       const above = targetBox.top - box.height - 8;
+      const preferredTop = above > 8 ? above : targetBox.bottom + 8;
+      const top = Math.max(8, Math.min(window.innerHeight - box.height - 8, preferredTop));
       tooltip.style.left = `${left}px`;
-      tooltip.style.top = `${above > 8 ? above : targetBox.bottom + 8}px`;
+      tooltip.style.top = `${top}px`;
     }
 
     let activeTapTooltip = null;
@@ -111,7 +159,10 @@
     document.querySelectorAll(".award-medal").forEach(registerTapTooltip);
     document.addEventListener("click", closeTapTooltip);
     document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") closeTapTooltip();
+      if (event.key === "Escape") {
+        closeTapTooltip();
+        hideTooltip();
+      }
     });
     window.addEventListener("resize", () => {
       if (activeTapTooltip?.dataset.tooltip) positionTooltip(activeTapTooltip);

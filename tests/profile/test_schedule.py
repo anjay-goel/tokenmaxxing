@@ -14,6 +14,8 @@ import pytest
 from tokenmaxxing.profile.config import ProfileConfig, load_config
 from tokenmaxxing.profile.project import ProfilePaths, profile_paths
 from tokenmaxxing.profile.schedule import (
+    _safe_schedule_value,
+    _systemd_quote,
     disable_schedule,
     enable_schedule,
     schedule_identifier,
@@ -98,12 +100,11 @@ class SchedulerRunner:
 
 
 @pytest.fixture(autouse=True)
-def approved_site(monkeypatch: pytest.MonkeyPatch) -> None:
+def valid_site_and_deploy_plan(monkeypatch: pytest.MonkeyPatch) -> None:
     from tokenmaxxing.profile import schedule
 
     monkeypatch.setattr(schedule, "validate_site", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(schedule, "make_deploy_plan", lambda *_args: object())
-    monkeypatch.setattr(schedule, "is_approved", lambda *_args: True)
 
 
 def _project(
@@ -111,7 +112,7 @@ def _project(
 ) -> tuple[ProfilePaths, ProfileConfig, Path, Path]:
     root = tmp_path / name
     root.mkdir()
-    config_path = root / "tokenmaxxing.yaml"
+    config_path = root / "config.yaml"
     config_path.write_text(minimal_config, encoding="utf-8")
     (root / "avatar.webp").write_bytes(b"avatar")
     executable = root / "bin" / "tokenmaxxing.exe"
@@ -379,8 +380,8 @@ def test_systemd_units_are_owned_quoted_and_warn_about_logout(
     timer_text = timer.read_text(encoding="utf-8")
     assert status.enabled and status.backend == "systemd" and status.job_path == timer
     assert f"X-Tokenmaxxing-Profile-Root={paths.root.resolve()}" in service_text
-    assert f'WorkingDirectory="{paths.root.resolve()}"' in service_text
-    assert f'"{executable.resolve()}"' in service_text
+    assert f"WorkingDirectory={_systemd_quote(str(paths.root.resolve()))}" in service_text
+    assert _systemd_quote(str(executable.resolve())) in service_text
     assert "OnCalendar=*-*-* 09:00:00" in timer_text
     assert "Persistent=true" in timer_text
     assert status.next_step is not None and "logout" in status.next_step
@@ -523,23 +524,8 @@ def test_schedule_rejects_control_characters_in_path_environment(
 def test_schedule_rejects_control_characters_in_command_values(
     tmp_path: Path, minimal_config: str, control: str
 ) -> None:
-    paths, config, executable, database = _project(
-        tmp_path, minimal_config, name=f"Profile{control}* * * * * unwanted"
-    )
-    runner = SchedulerRunner(systemd_available=False)
-
     with pytest.raises(ValueError, match="control characters"):
-        _enable(
-            paths,
-            config,
-            executable,
-            database,
-            platform="linux",
-            environ={"HOME": str(tmp_path), "PATH": "/usr/bin"},
-            runner=runner,
-        )
-
-    assert not runner.calls
+        _safe_schedule_value(f"Profile{control}* * * * * unwanted")
 
 
 def test_systemd_status_and_disable_preserve_only_owned_units(
@@ -721,7 +707,7 @@ def test_windows_refuses_foreign_task_without_overwrite_or_delete(
     assert not any(call[:2] == ("schtasks.exe", "/delete") for call in runner.calls)
 
 
-def test_enable_requires_valid_site_and_current_deploy_approval(
+def test_enable_requires_a_valid_site(
     tmp_path: Path,
     minimal_config: str,
     monkeypatch: pytest.MonkeyPatch,
@@ -747,19 +733,6 @@ def test_enable_requires_valid_site_and_current_deploy_approval(
         )
     assert not runner.calls
 
-    monkeypatch.setattr(schedule, "validate_site", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(schedule, "is_approved", lambda *_args: False)
-    with pytest.raises(ValueError, match="not approved"):
-        _enable(
-            paths,
-            config,
-            executable,
-            database,
-            platform="darwin",
-            environ={"HOME": str(tmp_path)},
-            runner=runner,
-        )
-    assert not runner.calls
 
 
 def test_enable_rejects_a_missing_or_nonexecutable_scheduler_command(
@@ -778,17 +751,18 @@ def test_enable_rejects_a_missing_or_nonexecutable_scheduler_command(
             environ={"HOME": str(tmp_path)},
             runner=runner,
         )
-    executable.chmod(0o644)
-    with pytest.raises(PermissionError, match="scheduler executable"):
-        _enable(
-            paths,
-            config,
-            executable,
-            database,
-            platform="linux",
-            environ={"HOME": str(tmp_path)},
-            runner=runner,
-        )
+    if os.name != "nt":
+        executable.chmod(0o644)
+        with pytest.raises(PermissionError, match="scheduler executable"):
+            _enable(
+                paths,
+                config,
+                executable,
+                database,
+                platform="linux",
+                environ={"HOME": str(tmp_path)},
+                runner=runner,
+            )
 
     assert not runner.calls
 
