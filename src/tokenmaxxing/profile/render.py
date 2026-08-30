@@ -26,6 +26,7 @@ JsonValue: TypeAlias = (
     None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
 )
 PROFILE_SOURCE_URL = "https://github.com/anjay-goel/tokenmaxxing"
+_AGENT_SEGMENT_COUNT = 12
 
 _HARNESS_ICONS = {
     "claude": "claude",
@@ -128,6 +129,20 @@ def _group_agent_models(models: object, total: int) -> list[dict[str, JsonValue]
     if other:
         grouped.append({"name": "other models", "agents": other})
     return grouped
+
+
+def _agent_segments(data: ProfileData) -> dict[str, int]:
+    totals: dict[str, int] = {}
+    for daily in data.recent_days:
+        for model in _group_agent_models(daily.models, daily.agents):
+            name = str(model["name"])
+            totals[name] = totals.get(name, 0) + int(model["agents"])
+    return {
+        name: index % _AGENT_SEGMENT_COUNT
+        for index, (name, _) in enumerate(
+            sorted(totals.items(), key=lambda item: (-item[1], item[0]))
+        )
+    }
 
 
 def _activity_levels(data: ProfileData) -> dict[date, int]:
@@ -430,6 +445,7 @@ def render_site(
         activity_tokens=compact_tokens(
             sum(day.total_tokens for day in data.activity_days)
         ),
+        agent_segments=_agent_segments(data),
         awards=_award_views(data),
         noindex=effective_noindex,
         structured_data=_structured_data(payload),

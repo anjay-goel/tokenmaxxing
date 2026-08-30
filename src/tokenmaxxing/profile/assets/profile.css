@@ -44,13 +44,18 @@
   --level-2: #8a4423;
   --level-3: #73351b;
   --level-4: #572511;
-  --segment-0: #98431f;
-  --segment-1: #32688a;
-  --segment-2: #59752c;
-  --segment-3: #7b4c7c;
-  --segment-4: #b07824;
-  --segment-5: #4f746e;
-  --segment-6: #6b647e;
+  --segment-0: #b96d38;
+  --segment-1: #3f7fa6;
+  --segment-2: #70964a;
+  --segment-3: #a45b95;
+  --segment-4: #c08b32;
+  --segment-5: #438c82;
+  --segment-6: #796aa8;
+  --segment-7: #bc5f64;
+  --segment-8: #5472b2;
+  --segment-9: #91873d;
+  --segment-10: #b76887;
+  --segment-11: #3d8296;
   --serif: "Newsreader", "Iowan Old Style", Georgia, serif;
   --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -70,13 +75,18 @@
   --level-2: #aa8055;
   --level-3: #c89761;
   --level-4: #e0b780;
-  --segment-0: #d48a52;
-  --segment-1: #74add0;
-  --segment-2: #9fbe66;
-  --segment-3: #c28ac0;
-  --segment-4: #d9b45d;
-  --segment-5: #70aaa0;
-  --segment-6: #9b91bd;
+  --segment-0: #d28445;
+  --segment-1: #4e9aca;
+  --segment-2: #86ad54;
+  --segment-3: #c06caf;
+  --segment-4: #d7a93f;
+  --segment-5: #50a89d;
+  --segment-6: #8f7ac4;
+  --segment-7: #d56b70;
+  --segment-8: #6d87cf;
+  --segment-9: #aaa04a;
+  --segment-10: #ca7597;
+  --segment-11: #4f9daf;
 }
 
 * { box-sizing: border-box; }
@@ -527,13 +537,18 @@ a { color: inherit; }
   cursor: default;
 }
 
-.agent-bar span { width: 100%; min-height: 0; background: var(--segment-0); filter: saturate(1.2) brightness(0.82); }
-.agent-bar span[style*="--segment: 1"] { background: var(--segment-1); }
-.agent-bar span[style*="--segment: 2"] { background: var(--segment-2); }
-.agent-bar span[style*="--segment: 3"] { background: var(--segment-3); }
-.agent-bar span[style*="--segment: 4"] { background: var(--segment-4); }
-.agent-bar span[style*="--segment: 5"] { background: var(--segment-5); }
-.agent-bar span[style*="--segment: 6"] { background: var(--segment-6); }
+.agent-bar span { width: 100%; min-height: 0; background: var(--segment-0); }
+.agent-bar span[data-segment="1"] { background: var(--segment-1); }
+.agent-bar span[data-segment="2"] { background: var(--segment-2); }
+.agent-bar span[data-segment="3"] { background: var(--segment-3); }
+.agent-bar span[data-segment="4"] { background: var(--segment-4); }
+.agent-bar span[data-segment="5"] { background: var(--segment-5); }
+.agent-bar span[data-segment="6"] { background: var(--segment-6); }
+.agent-bar span[data-segment="7"] { background: var(--segment-7); }
+.agent-bar span[data-segment="8"] { background: var(--segment-8); }
+.agent-bar span[data-segment="9"] { background: var(--segment-9); }
+.agent-bar span[data-segment="10"] { background: var(--segment-10); }
+.agent-bar span[data-segment="11"] { background: var(--segment-11); }
 
 .ranking-head { align-items: center; }
 

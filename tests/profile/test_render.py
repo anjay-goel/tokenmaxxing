@@ -2,7 +2,7 @@ import gzip
 import json
 import re
 from dataclasses import fields, replace
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -21,7 +21,13 @@ from tokenmaxxing.profile.config import (
     SiteConfig,
 )
 from tokenmaxxing.profile.build import validate_site
-from tokenmaxxing.profile.data import HarnessTotal, ModelTotal, build_profile_data
+from tokenmaxxing.profile.data import (
+    AgentModelTotal,
+    DailyAgentTotal,
+    HarnessTotal,
+    ModelTotal,
+    build_profile_data,
+)
 from tokenmaxxing.profile.project import profile_paths
 from tokenmaxxing.profile.render import render_site
 
@@ -700,29 +706,80 @@ def test_agents_chart_uses_distinct_model_colors_in_both_themes(
 
     css = (destination / "assets" / "profile.css").read_text(encoding="utf-8")
 
-    for color in (
-        "#98431f",
-        "#32688a",
-        "#59752c",
-        "#7b4c7c",
-        "#b07824",
-        "#4f746e",
-        "#6b647e",
-    ):
+    light_colors = (
+        "#b96d38",
+        "#3f7fa6",
+        "#70964a",
+        "#a45b95",
+        "#c08b32",
+        "#438c82",
+        "#796aa8",
+        "#bc5f64",
+        "#5472b2",
+        "#91873d",
+        "#b76887",
+        "#3d8296",
+    )
+    dark_colors = (
+        "#d28445",
+        "#4e9aca",
+        "#86ad54",
+        "#c06caf",
+        "#d7a93f",
+        "#50a89d",
+        "#8f7ac4",
+        "#d56b70",
+        "#6d87cf",
+        "#aaa04a",
+        "#ca7597",
+        "#4f9daf",
+    )
+    assert len(set(light_colors)) == 12
+    assert len(set(dark_colors)) == 12
+    for color in light_colors:
         assert color in css
-    for color in (
-        "#d48a52",
-        "#74add0",
-        "#9fbe66",
-        "#c28ac0",
-        "#d9b45d",
-        "#70aaa0",
-        "#9b91bd",
-    ):
+    for color in dark_colors:
         assert color in css
     agent_segment = re.search(r"\.agent-bar span\s*\{([^}]*)\}", css, re.DOTALL)
     assert agent_segment is not None
-    assert "filter: saturate(1.2) brightness(0.82)" in agent_segment.group(1)
+    assert "filter:" not in agent_segment.group(1)
+
+
+def test_agents_chart_assigns_colors_by_model_identity(tmp_path: Path) -> None:
+    destination = tmp_path / "site"
+    data = replace(
+        _data(),
+        agent_models=(
+            AgentModelTotal(model="claude-opus-5", agents=9),
+            AgentModelTotal(model="gpt-5.6-sol", agents=9),
+        ),
+        recent_days=(
+            DailyAgentTotal(
+                day=date(2026, 8, 29),
+                agents=10,
+                models=(
+                    AgentModelTotal(model="claude-opus-5", agents=7),
+                    AgentModelTotal(model="gpt-5.6-sol", agents=3),
+                ),
+            ),
+            DailyAgentTotal(
+                day=date(2026, 8, 30),
+                agents=8,
+                models=(
+                    AgentModelTotal(model="gpt-5.6-sol", agents=6),
+                    AgentModelTotal(model="claude-opus-5", agents=2),
+                ),
+            ),
+        ),
+    )
+
+    render_site(_config(tmp_path), data, _paths(tmp_path), destination, noindex=True)
+
+    html = (destination / "index.html").read_text(encoding="utf-8")
+    assert html.count('data-segment="0" style="flex-grow: 7"') == 1
+    assert html.count('data-segment="0" style="flex-grow: 2"') == 1
+    assert html.count('data-segment="1" style="flex-grow: 3"') == 1
+    assert html.count('data-segment="1" style="flex-grow: 6"') == 1
 
 
 def test_profile_controls_and_awards_adapt_without_mobile_orphans(
