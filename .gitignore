@@ -1,0 +1,15 @@
+.worktrees/
+.superpowers/
+.venv/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+*.sqlite
+*.sqlite3
+*.db
+*-journal
+*-wal
+*-shm
+salt
+ownership.json
+dist/

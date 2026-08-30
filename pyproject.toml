@@ -1,0 +1,45 @@
+[build-system]
+requires = ["uv_build>=0.8.0,<0.9.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "tokenmaxxing"
+
+[project]
+name = "tokenmaxxing-history"
+version = "0.1.0"
+description = "Local metadata-only agent usage accounting"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Tokenmaxxing contributors" },
+]
+requires-python = ">=3.12"
+dependencies = []
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: System :: Monitoring",
+]
+keywords = ["agent", "claude-code", "codex", "opencode", "pi", "tokens", "usage"]
+
+[project.urls]
+License = "https://spdx.org/licenses/MIT.html"
+
+[project.scripts]
+tokenmaxxing = "tokenmaxxing.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

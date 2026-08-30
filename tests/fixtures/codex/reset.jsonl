@@ -1,0 +1,5 @@
+{"timestamp":"2026-08-28T00:00:00Z","type":"session_meta","payload":{"id":"reset-session","timestamp":"2026-08-28T00:00:00Z","originator":"codex_cli_rs","cli_version":"1.0.0","source":"cli","model_provider":"openai"}}
+{"timestamp":"2026-08-28T00:00:01Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"output_tokens":10},"last_token_usage":{"input_tokens":100,"output_tokens":10}}}}
+{"timestamp":"2026-08-28T00:00:02Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":120,"output_tokens":15},"last_token_usage":{"input_tokens":20,"output_tokens":5}}}}
+{"timestamp":"2026-08-28T00:00:03Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"output_tokens":2},"last_token_usage":{"input_tokens":10,"output_tokens":2}}}}
+{"timestamp":"2026-08-28T00:00:04Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":10,"output_tokens":2},"last_token_usage":{"input_tokens":10,"output_tokens":2}}}}
