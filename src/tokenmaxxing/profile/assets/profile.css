@@ -692,6 +692,8 @@ a { color: inherit; }
   pointer-events: none;
 }
 
+.chart-tooltip[hidden] { display: none; }
+
 .chart-tooltip-title { color: var(--ink); font: 620 12px/1.25 var(--sans); }
 .chart-tooltip-total { color: var(--accent); font: 600 11px/1.3 var(--mono); }
 

@@ -621,6 +621,7 @@ def test_chart_tooltips_use_safe_structured_content(tmp_path: Path) -> None:
     assert ".chart-tooltip-title" in css
     assert ".chart-tooltip-total" in css
     assert ".chart-tooltip-breakdown" in css
+    assert re.search(r"\.chart-tooltip\[hidden\]\s*\{[^}]*display:\s*none", css)
     assert re.search(
         r"\.chart-tooltip-breakdown\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto",
         css,
