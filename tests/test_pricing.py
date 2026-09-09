@@ -550,6 +550,9 @@ def test_rate_card_rejects_invalid_retrieval_dates(tmp_path: Path) -> None:
         ("xai", "grok-4.6", 2),
         ("mistral", "mistral-medium-3.5", 1.5),
         ("qwen", "qwen3.8-max", 2),
+        ("qwen", "qwen3.8-max-0902", 2),
+        ("qwen", "qwen3.8-max-2026-09-02", 2),
+        ("qwen", "qwen3.8-flash", 0.15),
     ],
 )
 def test_bundled_card_prices_popular_model_families(
@@ -560,6 +563,7 @@ def test_bundled_card_prices_popular_model_families(
             _row(
                 provider=provider,
                 model=model,
+                occurred_at="2026-09-09T00:00:00+00:00",
                 granularity="counter_delta",
                 input_tokens=1_000_000,
             )
@@ -575,6 +579,10 @@ def test_bundled_card_prices_popular_model_families(
     ("provider", "model", "occurred_at", "input_rate", "cached_rate", "output_rate"),
     [
         ("openai-codex", "gpt-6-astra", "2026-09-03T00:00:00+00:00", 10, 1, 50),
+        ("anthropic", "claude-fable-5-1", "2026-09-01T00:00:00+00:00", 10, 0.25, 50),
+        ("anthropic", "claude-mythos-5-1", "2026-09-01T00:00:00+00:00", 10, 0.25, 50),
+        ("google", "gemini-3.8-flash", "2026-09-02T00:00:00+00:00", 0.75, 0.075, 3.75),
+        ("google", "gemini-3.8-flash", "2027-01-01T00:00:00+00:00", 1.5, 0.15, 7.5),
         ("openai", "gpt-5.6-sol", "2026-08-30T12:00:00+00:00", 4, 0.4, 20),
         ("anthropic", "claude-sonnet-5", "2026-09-02T12:00:00+00:00", 2, 0.2, 10),
         ("deepseek", "deepseek-v4-pro", "2026-08-17T12:00:00+00:00", 0.66, 0.022, 1.98),
