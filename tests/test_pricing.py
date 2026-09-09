@@ -574,6 +574,7 @@ def test_bundled_card_prices_popular_model_families(
 @pytest.mark.parametrize(
     ("provider", "model", "occurred_at", "input_rate", "cached_rate", "output_rate"),
     [
+        ("openai-codex", "gpt-6-astra", "2026-09-03T00:00:00+00:00", 10, 1, 50),
         ("openai", "gpt-5.6-sol", "2026-08-30T12:00:00+00:00", 4, 0.4, 20),
         ("anthropic", "claude-sonnet-5", "2026-09-02T12:00:00+00:00", 2, 0.2, 10),
         ("deepseek", "deepseek-v4-pro", "2026-08-17T12:00:00+00:00", 0.66, 0.022, 1.98),
