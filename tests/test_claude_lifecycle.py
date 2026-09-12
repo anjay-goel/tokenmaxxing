@@ -90,7 +90,7 @@ def test_incremental_append_updates_the_existing_message(
     assert repository.source_total("claude").tokens.output == 21
 
 
-def test_replacement_excludes_events_removed_from_the_current_generation(
+def test_replacement_preserves_events_removed_from_the_current_generation(
     repository: Repository, tmp_path: Path
 ) -> None:
     path = tmp_path / "replacement.jsonl"
@@ -107,12 +107,12 @@ def test_replacement_excludes_events_removed_from_the_current_generation(
 
     old = repository.get_event("claude:msg_old")
     new = repository.get_event("claude:msg_new")
-    assert old is not None and old.status == "excluded"
+    assert old is not None and old.status == "canonical"
     assert new is not None and new.status == "canonical"
-    assert repository.source_total("claude").tokens.output == 4
+    assert repository.source_total("claude").tokens.output == 13
 
 
-def test_truncation_excludes_removed_events_and_rebuilds_from_zero(
+def test_truncation_preserves_removed_events(
     repository: Repository, tmp_path: Path
 ) -> None:
     path = tmp_path / "truncated.jsonl"
@@ -133,9 +133,9 @@ def test_truncation_excludes_removed_events_and_rebuilds_from_zero(
 
     first = repository.get_event("claude:msg_first")
     second = repository.get_event("claude:msg_second")
-    assert first is not None and first.status == "excluded"
-    assert second is not None and second.status == "excluded"
-    assert repository.source_total("claude").tokens.output == 3
+    assert first is not None and first.status == "canonical"
+    assert second is not None and second.status == "canonical"
+    assert repository.source_total("claude").tokens.output == 20
 
 
 def test_sync_recovers_provisional_messages_after_interrupted_rebuild(
@@ -321,11 +321,11 @@ def test_sync_recovers_removed_message_after_interrupted_replacement(
 
     removed = repository.get_event("claude:msg_removed")
     assert recovery.lines_read == 0
-    assert removed is not None and removed.status == "excluded"
-    assert repository.source_total("claude").tokens.output == 4
+    assert removed is not None and removed.status == "canonical"
+    assert repository.source_total("claude").tokens.output == 13
 
 
-def test_missing_artifact_is_excluded_and_rediscovery_restores_it(
+def test_missing_artifact_is_retained_and_rediscovery_deduplicates_it(
     repository: Repository, tmp_path: Path
 ) -> None:
     root = tmp_path / "project"
@@ -343,7 +343,7 @@ def test_missing_artifact_is_excluded_and_rediscovery_restores_it(
     sync_claude(repository, root)
 
     missing = repository.get_event("claude:msg_missing")
-    assert missing is not None and missing.status == "excluded"
+    assert missing is not None and missing.status == "canonical"
     _write_jsonl(
         path,
         [_assistant("msg_missing", "entry-missing", usage=_usage(output_tokens=9))],
@@ -399,7 +399,7 @@ def test_same_inode_rediscovery_recovers_after_interrupted_rebuild(
     assert repeated.events_updated == 0
 
 
-def test_missing_higher_copy_recomputes_from_the_surviving_global_message(
+def test_missing_higher_copy_retains_the_collected_global_message(
     repository: Repository, tmp_path: Path
 ) -> None:
     root = tmp_path / "project"
@@ -428,12 +428,12 @@ def test_missing_higher_copy_recomputes_from_the_surviving_global_message(
     sync_claude(repository, root)
     repeated = sync_claude(repository, root)
 
-    assert repository.source_total("claude").tokens.output == 4
+    assert repository.source_total("claude").tokens.output == 9
     assert repeated.lines_read == 0
     assert repeated.events_updated == 0
 
 
-def test_stale_duplicate_message_falls_back_after_deletion_and_recovers_on_reappearance(
+def test_duplicate_message_stays_counted_once_across_deletion_and_reappearance(
     repository: Repository, tmp_path: Path
 ) -> None:
     root = tmp_path / "project"
@@ -461,7 +461,7 @@ def test_stale_duplicate_message_falls_back_after_deletion_and_recovers_on_reapp
     )
 
     sync_claude(repository, root)
-    assert repository.source_total("claude").tokens.output == 4
+    assert repository.source_total("claude").tokens.output == 9
 
     _write_jsonl(
         high,
@@ -545,7 +545,7 @@ def test_replacement_refreshes_canonical_string_metadata(
     assert event.inference_region == "current-geo"
 
 
-def test_replacement_clears_metadata_omitted_by_the_current_generation(
+def test_replacement_preserves_metadata_omitted_by_the_current_generation(
     repository: Repository, tmp_path: Path
 ) -> None:
     path = tmp_path / "metadata-clear.jsonl"
@@ -567,8 +567,8 @@ def test_replacement_clears_metadata_omitted_by_the_current_generation(
 
     event = repository.get_event("claude:msg_metadata_clear")
     assert event is not None
-    assert event.model is None
-    assert event.service_tier is None
+    assert event.model == "old-model"
+    assert event.service_tier == "old-tier"
 
 
 def test_later_progressive_snapshot_preserves_cross_channel_enrichment(
@@ -610,8 +610,8 @@ def test_later_progressive_snapshot_preserves_cross_channel_enrichment(
 
     event = repository.get_event("claude:msg_metadata_scope")
     assert event is not None
-    assert event.model is None
-    assert event.service_tier is None
+    assert event.model == "old-model"
+    assert event.service_tier == "old-tier"
     assert event.api == "messages"
     assert event.response_model == "resolved-model"
     assert event.duration_ns == 700

@@ -1,17 +1,20 @@
 import json
 import sqlite3
+import time
+from dataclasses import replace
 from collections.abc import Mapping
-from typing import cast
 
-from tokenmaxxing.ingest.codex.parse import _TOKEN_FIELDS, _usage
+from tokenmaxxing.ingest.codex.parse import _TOKEN_FIELDS, _event_key, _usage
 from tokenmaxxing.models import (
     IssueDraft,
+    LinkDraft,
     Projection,
     TokenUsage,
     UsageEventDraft,
     WriteStats,
 )
 from tokenmaxxing.repository import Repository
+
 
 def _delta_usage(
     previous: Mapping[str, int] | None,
@@ -51,143 +54,211 @@ def _rebuild_owners(repository: Repository, owners: set[str]) -> WriteStats:
         placeholders = ", ".join("?" for _ in owner_chunk)
         rows.extend(
             connection.execute(
-                "SELECT o.source_session_id, o.source_sequence, o.observed_at_ns, o.projection_json "
-                "FROM observations o JOIN artifacts a ON a.id = o.artifact_id "
+                "SELECT o.source_session_id, o.artifact_id, o.ordinal, o.observed_at_ns, "
+                "o.projection_json, o.stable_key, o.id FROM observations o "
                 "WHERE o.source = 'codex' AND o.channel = 'disk' AND o.event_type = 'token_count' "
-                f"AND o.source_session_id IN ({placeholders}) "
-                "AND COALESCE(a.is_missing, 0) = 0 "
-                "AND a.generation = (SELECT MAX(current.generation) FROM artifacts current "
-                "WHERE current.source = a.source AND current.path_hash = a.path_hash) "
-                "ORDER BY o.source_session_id, o.source_sequence, o.artifact_id, o.ordinal",
+                f"AND o.source_session_id IN ({placeholders}) AND o.artifact_id IS NOT NULL "
+                "ORDER BY o.artifact_id, o.ordinal",
                 tuple(owner_chunk),
             ).fetchall()
         )
-    semantic: dict[tuple[str, int], tuple[int, dict[str, object]]] = {}
-    conflicts: set[tuple[str, int]] = set()
-    for owner_value, ordinal_value, observed_at_ns, projection_json in rows:
-        if not isinstance(owner_value, str) or ordinal_value is None:
-            continue
-        key = (owner_value, int(ordinal_value))
+
+    previous: dict[tuple[str, int], dict[str, int]] = {}
+    candidates: dict[str, list[tuple[TokenUsage, int, int, str, int, str]]] = {}
+    occurrences: dict[tuple[str, int, str], int] = {}
+    active: dict[str, set[str]] = {owner: set() for owner in owners}
+    for (
+        owner_value,
+        artifact,
+        ordinal,
+        observed,
+        projection_json,
+        stable_key,
+        observation_id,
+    ) in rows:
+        owner = str(owner_value)
         projection = json.loads(str(projection_json))
         usage = projection.get("usage") if isinstance(projection, dict) else None
         if not isinstance(usage, dict):
             continue
-        candidate = (int(observed_at_ns), cast(dict[str, object], usage))
-        if key in semantic and semantic[key][1] != candidate[1]:
-            conflicts.add(key)
+        total, last = usage.get("total"), usage.get("last")
+        if not isinstance(total, dict) or not isinstance(last, dict):
             continue
-        semantic.setdefault(key, candidate)
+        stream = (owner, int(artifact))
+        tokens, _ = _delta_usage(previous.get(stream), total, last)
+        previous[stream] = total
+        event_key = _event_key(owner, int(observed), usage)
+        occurrence_key = (owner, int(artifact), event_key)
+        previous_occurrence = occurrences.get(occurrence_key)
+        occurrence = previous_occurrence if previous_occurrence is not None else 0
+        if previous_occurrence is not None and any(
+            (getattr(tokens, field) or 0) > 0 for field in _TOKEN_FIELDS
+        ):
+            occurrence += 1
+        occurrences[occurrence_key] = occurrence
+        if occurrence:
+            event_key = f"{event_key}:repeat:{occurrence}"
+        active[owner].add(event_key)
+        candidates.setdefault(event_key, []).append(
+            (tokens, int(artifact), int(ordinal), str(stable_key), int(observed), owner)
+        )
 
-    previous_by_owner: dict[str, dict[str, int]] = {}
-    active_keys_by_owner: dict[str, set[str]] = {owner: set() for owner in owners}
     writes = WriteStats()
     with repository.transaction() as target:
-        for (owner, ordinal), (observed_at_ns, usage) in sorted(semantic.items()):
-            event_key = f"codex:{owner}:{ordinal}"
-            active_keys_by_owner.setdefault(owner, set()).add(event_key)
-            total = cast(dict[str, int], usage.get("total"))
-            last = cast(dict[str, int], usage.get("last"))
-            if (owner, ordinal) in conflicts:
-                previous_by_owner.pop(owner, None)
-                projection = Projection(
-                    events=(
-                        UsageEventDraft(
+        for event_key, versions in candidates.items():
+            # Original physical context wins over later compacted or copied counter streams.
+            selected = min(versions, key=lambda row: (row[1], row[2]))
+            tokens, _, _, _, observed_at_ns, owner = selected
+            current = repository.get_event(event_key, source="codex")
+            first_by_artifact = {}
+            for row in versions:
+                first_by_artifact.setdefault(row[1], row)
+            conflicting_context = any(
+                row[0] != tokens for row in first_by_artifact.values()
+            )
+            if (
+                conflicting_context
+                and current is not None
+                and current.status == "canonical"
+            ):
+                tokens = current.tokens
+            countable = any(
+                (getattr(tokens, field) or 0) > 0 for field in _TOKEN_FIELDS
+            )
+            session_row = target.execute(
+                "SELECT id, root_session_id FROM sessions WHERE source = 'codex' AND source_session_id = ?",
+                (owner,),
+            ).fetchone()
+            session_id = run_id = None
+            if session_row is not None:
+                root = target.execute(
+                    "SELECT id FROM sessions WHERE source = 'codex' AND source_session_id = ?",
+                    (str(session_row[1] or owner),),
+                ).fetchone()
+                session_id = int(root[0]) if root is not None else int(session_row[0])
+                run = target.execute(
+                    "SELECT id FROM runs WHERE session_id = ? AND source_run_id = ?",
+                    (int(session_row[0]), owner),
+                ).fetchone()
+                run_id = int(run[0]) if run is not None else None
+            if current is None:
+                legacy = target.execute(
+                    "SELECT e.event_key FROM observations o JOIN observation_links l ON l.observation_id = o.id "
+                    "JOIN usage_events e ON e.id = l.usage_event_id "
+                    "WHERE o.source = 'codex' AND o.channel = 'disk' AND o.stable_key = ? ORDER BY e.id LIMIT 1",
+                    (selected[3],),
+                ).fetchone()
+                current = (
+                    repository.get_event(str(legacy[0]), source="codex")
+                    if legacy is not None
+                    else None
+                )
+            template = current or UsageEventDraft(
+                source="codex",
+                event_key=event_key,
+                granularity="counter_delta",
+                status="provisional",
+                tokens=TokenUsage(),
+            )
+            event = replace(
+                template,
+                event_key=event_key,
+                granularity="counter_delta",
+                status="canonical" if countable else "excluded",
+                tokens=tokens,
+                session_id=session_id
+                if session_id is not None
+                else template.session_id,
+                run_id=run_id if run_id is not None else template.run_id,
+                completed_at_ns=observed_at_ns or template.completed_at_ns,
+                replace_usage=True,
+            )
+            unchanged = (
+                current is not None
+                and current.event_key == event_key
+                and all(
+                    getattr(current, field) == getattr(event, field)
+                    for field in (
+                        "status",
+                        "tokens",
+                        "session_id",
+                        "run_id",
+                        "completed_at_ns",
+                    )
+                )
+            )
+            added = repository.apply_projection_in_transaction(
+                target,
+                Projection(
+                    events=() if unchanged else (event,),
+                    links=tuple(
+                        LinkDraft(
                             source="codex",
+                            channel="disk",
+                            observation_key=row[3],
                             event_key=event_key,
-                            granularity="counter_delta",
-                            status="conflicted",
-                            tokens=TokenUsage(),
-                            replace_usage=True,
-                        ),
+                            method="usage_fingerprint",
+                            role="primary",
+                            confidence="exact",
+                        )
+                        for row in versions
                     ),
                     issues=(
                         IssueDraft(
                             source="codex",
-                            category="conflicting_owner_event",
-                            severity="error",
+                            category="conflicting_counter_context",
+                            severity="warning",
                             identifier=event_key,
-                            field_path=str(ordinal),
                             observed_type="usage",
                         ),
-                    ),
-                )
-            else:
-                tokens, countable = _delta_usage(previous_by_owner.get(owner), total, last)
-                session_row = target.execute(
-                    "SELECT id, root_session_id FROM sessions "
-                    "WHERE source = 'codex' AND source_session_id = ?",
-                    (owner,),
-                ).fetchone()
-                session_id: int | None = None
-                run_id: int | None = None
-                if session_row is not None:
-                    root_id = str(session_row[1] or owner)
-                    root_row = target.execute(
-                        "SELECT id FROM sessions WHERE source = 'codex' AND source_session_id = ?",
-                        (root_id,),
-                    ).fetchone()
-                    session_id = int(root_row[0]) if root_row is not None else int(session_row[0])
-                    run_row = target.execute(
-                        "SELECT r.id FROM runs r JOIN sessions s ON s.id = r.session_id "
-                        "WHERE s.source = 'codex' AND s.source_session_id = ? "
-                        "AND r.source_run_id = ?",
-                        (owner, owner),
-                    ).fetchone()
-                    run_id = int(run_row[0]) if run_row is not None else None
-                projection = Projection(
-                    events=(
-                        UsageEventDraft(
-                            source="codex",
-                            event_key=event_key,
-                            granularity="counter_delta",
-                            status="canonical" if countable else "excluded",
-                            tokens=tokens,
-                            session_id=session_id,
-                            run_id=run_id,
-                            completed_at_ns=observed_at_ns or None,
-                            replace_usage=True,
-                        ),
                     )
-                )
-            added = repository.apply_projection_in_transaction(target, projection)
+                    if conflicting_context
+                    else (),
+                ),
+            )
             writes = WriteStats(
-                observations_inserted=writes.observations_inserted + added.observations_inserted,
                 events_inserted=writes.events_inserted + added.events_inserted,
                 events_updated=writes.events_updated + added.events_updated,
                 links_inserted=writes.links_inserted + added.links_inserted,
-                samples_inserted=writes.samples_inserted + added.samples_inserted,
                 issues_recorded=writes.issues_recorded + added.issues_recorded,
             )
-            if (owner, ordinal) not in conflicts:
-                previous_by_owner[owner] = total
         for owner in sorted(owners):
-            existing_events = {
-                (int(row[0]), str(row[1]))
-                for row in target.execute(
-                    "SELECT DISTINCT e.id, e.event_key FROM observations o "
-                    "INDEXED BY idx_observations_codex_owner_link "
-                    "CROSS JOIN observation_links l "
-                    "INDEXED BY sqlite_autoindex_observation_links_1 "
-                    "CROSS JOIN usage_events e "
-                    "WHERE o.source = 'codex' AND o.channel = 'disk' "
-                    "AND o.source_session_id = ? "
-                    "AND l.observation_id = o.id AND e.id = l.usage_event_id "
-                    "AND e.source = 'codex'",
-                    (owner,),
-                )
-            }
+            existing = target.execute(
+                "SELECT DISTINCT e.id, e.event_key FROM observations o "
+                "INDEXED BY idx_observations_codex_owner_link CROSS JOIN observation_links l "
+                "INDEXED BY sqlite_autoindex_observation_links_1 CROSS JOIN usage_events e "
+                "WHERE o.source = 'codex' AND o.channel = 'disk' AND o.source_session_id = ? "
+                "AND l.observation_id = o.id AND e.id = l.usage_event_id AND e.source = 'codex'",
+                (owner,),
+            ).fetchall()
             target.executemany(
-                "UPDATE usage_events SET status = 'excluded' "
-                "WHERE id = ?",
+                "UPDATE usage_events SET status = 'excluded' WHERE id = ?",
                 (
-                    (event_id,)
-                    for event_id, event_key in sorted(
-                        existing_events
-                    )
-                    if event_key not in active_keys_by_owner.get(owner, set())
+                    (int(row[0]),)
+                    for row in existing
+                    if str(row[1]) not in active[owner]
                 ),
             )
     return writes
+
+
+def rebuild_codex_history(repository: Repository) -> WriteStats:
+    connection = repository.connection
+    with repository.transaction():
+        owners = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT DISTINCT source_session_id FROM observations WHERE source = 'codex' "
+                "AND channel = 'disk' AND event_type = 'token_count' AND source_session_id IS NOT NULL"
+            )
+        }
+        writes = _rebuild_owners(repository, owners)
+        connection.execute(
+            "UPDATE issues SET resolved_at_ns = ? WHERE source = 'codex' "
+            "AND category = 'conflicting_owner_event' AND resolved_at_ns IS NULL",
+            (time.time_ns(),),
+        )
+        return writes
 
 
 def _provisional_owners(repository: Repository) -> set[str]:
@@ -202,36 +273,17 @@ def _provisional_owners(repository: Repository) -> set[str]:
         "AND o.source_session_id IS NOT NULL"
     ).fetchall()
     return {str(row[0]) for row in rows}
-def _stale_counted_owners(repository: Repository) -> set[str]:
+
+
+def _legacy_owners(repository: Repository) -> set[str]:
     rows = repository.connection.execute(
-        "SELECT DISTINCT old.source_session_id FROM usage_events e "
-        "INDEXED BY idx_usage_events_status "
-        "CROSS JOIN observation_links l "
-        "INDEXED BY idx_observation_links_usage_event "
-        "CROSS JOIN observations old "
-        "WHERE e.source = 'codex' AND e.status IN ('canonical', 'provisional', 'conflicted') "
-        "AND l.usage_event_id = e.id AND old.id = l.observation_id "
-        "AND old.source = 'codex' AND old.channel = 'disk' "
-        "AND old.event_type = 'token_count' AND old.source_session_id IS NOT NULL "
-        "AND (NOT EXISTS ("
-        "SELECT 1 FROM observations live "
-        "INDEXED BY idx_observations_codex_owner_artifact "
-        "JOIN artifacts a ON a.id = live.artifact_id "
-        "WHERE live.source = 'codex' AND live.channel = 'disk' "
-        "AND live.event_type = 'token_count' "
-        "AND live.source_session_id = old.source_session_id "
-        "AND COALESCE(a.is_missing, 0) = 0 "
-        "AND a.generation = (SELECT MAX(current.generation) FROM artifacts current "
-        "WHERE current.source = a.source AND current.path_hash = a.path_hash)) "
-        "OR (e.status = 'conflicted' AND EXISTS ("
-        "SELECT 1 FROM observations missing "
-        "INDEXED BY idx_observations_codex_owner_artifact "
-        "JOIN artifacts a ON a.id = missing.artifact_id "
-        "WHERE missing.source = 'codex' AND missing.channel = 'disk' "
-        "AND missing.event_type = 'token_count' "
-        "AND missing.source_session_id = old.source_session_id "
-        "AND a.is_missing = 1 "
-        "AND a.generation = (SELECT MAX(current.generation) FROM artifacts current "
-        "WHERE current.source = a.source AND current.path_hash = a.path_hash))))"
+        "SELECT DISTINCT o.source_session_id FROM usage_events e "
+        "JOIN observation_links l ON l.usage_event_id = e.id "
+        "JOIN observations o ON o.id = l.observation_id "
+        "WHERE e.source = 'codex' AND l.method = 'owner_ordinal' "
+        "AND o.source = 'codex' AND o.channel = 'disk' "
+        "AND o.event_type = 'token_count' AND o.source_session_id IS NOT NULL "
+        "AND NOT EXISTS (SELECT 1 FROM observation_links migrated "
+        "WHERE migrated.observation_id = o.id AND migrated.method = 'usage_fingerprint')"
     ).fetchall()
     return {str(row[0]) for row in rows}

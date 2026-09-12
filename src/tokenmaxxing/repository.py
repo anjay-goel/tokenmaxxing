@@ -356,7 +356,9 @@ class Repository:
         usage_columns = frozenset((*_TOKEN_COLUMNS.values(), *_COST_COLUMNS.values()))
         for column in columns[4:]:
             if column in draft.replace_metadata_fields:
-                updates.append(f"{column} = excluded.{column}")
+                updates.append(
+                    f"{column} = COALESCE(excluded.{column}, usage_events.{column})"
+                )
             elif draft.replace_usage and column in usage_columns:
                 updates.append(f"{column} = excluded.{column}")
             else:
@@ -456,6 +458,19 @@ class Repository:
     def _merge_events(
         self, connection: sqlite3.Connection, survivor_id: int, absorbed_id: int
     ) -> None:
+        def resolve(event_id: int) -> int:
+            while True:
+                row = connection.execute(
+                    "SELECT merged_into_id FROM usage_events WHERE id = ?", (event_id,)
+                ).fetchone()
+                if row is None:
+                    raise ValueError("events to merge must exist and have the same source")
+                if row[0] is None:
+                    return event_id
+                event_id = int(row[0])
+
+        survivor_id = resolve(survivor_id)
+        absorbed_id = resolve(absorbed_id)
         if survivor_id == absorbed_id:
             return
         rows = connection.execute(
@@ -486,10 +501,9 @@ class Repository:
             (survivor_id, absorbed_id),
         )
         connection.execute(
-            "DELETE FROM observation_links WHERE usage_event_id = ?",
-            (absorbed_id,),
+            "UPDATE usage_events SET status = 'excluded', merged_into_id = ? WHERE id = ?",
+            (survivor_id, absorbed_id),
         )
-        connection.execute("DELETE FROM usage_events WHERE id = ?", (absorbed_id,))
 
     def totals(self, group_by: str | None = None) -> list[UsageTotal]:
         if group_by is not None and group_by not in _GROUP_COLUMNS:
@@ -600,10 +614,12 @@ class Repository:
             cost_nanos=cast(int | None, row["total_cost_nanos"]),
         )
 
-    def get_event(self, event_key: str) -> UsageEventDraft | None:
+    def get_event(self, event_key: str, source: Source | None = None) -> UsageEventDraft | None:
+        where = "event_key = ?" if source is None else "source = ? AND event_key = ?"
+        parameters = (event_key,) if source is None else (source, event_key)
         cursor = self.connection.execute(
-            "SELECT * FROM usage_events WHERE event_key = ? ORDER BY id LIMIT 1",
-            (event_key,),
+            f"SELECT * FROM usage_events WHERE {where} ORDER BY id LIMIT 1",
+            parameters,
         )
         row = cursor.fetchone()
         if row is None:

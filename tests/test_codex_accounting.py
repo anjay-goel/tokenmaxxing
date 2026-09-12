@@ -10,6 +10,7 @@ from tokenmaxxing.models import (
 )
 from tokenmaxxing.repository import Repository
 from codex_support import (
+    _event,
     _copy,
     _create_state_db,
     _create_thread_history_db,
@@ -34,7 +35,7 @@ def test_counter_reset_uses_last_usage(
     sync_codex(repository, roots)
 
     assert repository.source_total("codex").tokens == TokenUsage(input=130, output=17)
-    final_event = repository.get_event("codex:reset-session:3")
+    final_event = _event(repository, "reset-session", 3)
     assert final_event is not None
     assert final_event.status == "excluded"
 
@@ -80,20 +81,22 @@ def test_invalid_usage_does_not_change_later_semantic_ordinals_across_syncs(
     try:
         one_shot_repository = Repository(one_shot_database)
         one_shot_roots = _roots(tmp_path / "one-shot")
-        _write_jsonl(one_shot_roots.sessions / "rollout.jsonl", [session, invalid, valid])
+        _write_jsonl(
+            one_shot_roots.sessions / "rollout.jsonl", [session, invalid, valid]
+        )
         sync_codex(one_shot_repository, one_shot_roots)
 
-        assert repository.list_event_keys("codex") == {"codex:ordinal-session:0"}
-        assert one_shot_repository.list_event_keys("codex") == {
-            "codex:ordinal-session:0"
-        }
+        assert repository.event_count("codex") == 1
+        assert repository.list_event_keys(
+            "codex"
+        ) == one_shot_repository.list_event_keys("codex")
         assert repository.source_total("codex").tokens == TokenUsage(input=5)
         assert one_shot_repository.source_total("codex").tokens == TokenUsage(input=5)
     finally:
         one_shot_database.close()
 
 
-def test_conflict_invalidates_baseline_until_the_next_unambiguous_event(
+def test_distinct_physical_streams_do_not_share_counter_baselines(
     repository: Repository, tmp_path: Path
 ) -> None:
     roots = _roots(tmp_path)
@@ -118,13 +121,13 @@ def test_conflict_invalidates_baseline_until_the_next_unambiguous_event(
 
     sync_codex(repository, roots)
 
-    conflicted = repository.get_event("codex:conflict-session:0")
-    recovered = repository.get_event("codex:conflict-session:1")
-    continued = repository.get_event("codex:conflict-session:2")
-    assert conflicted is not None and conflicted.status == "conflicted"
-    assert recovered is not None and recovered.tokens == TokenUsage(input=25)
+    conflicted = _event(repository, "conflict-session", 0)
+    recovered = _event(repository, "conflict-session", 1)
+    continued = _event(repository, "conflict-session", 2)
+    assert conflicted is not None and conflicted.tokens == TokenUsage(input=10)
+    assert recovered is not None and recovered.tokens == TokenUsage(input=150)
     assert continued is not None and continued.tokens == TokenUsage(input=10)
-    assert repository.source_total("codex").tokens == TokenUsage(input=35)
+    assert repository.source_total("codex").tokens == TokenUsage(input=190)
 
 
 def test_spawn_edges_set_root_parent_and_run_depth(
@@ -156,11 +159,14 @@ def test_spawn_edges_set_root_parent_and_run_depth(
         ("child-session", "parent-session", 1),
         ("parent-session", None, 0),
     ]
-    child_event = repository.get_event("codex:child-session:0")
+    child_event = _event(repository, "child-session", 0)
     assert child_event is not None
-    assert child_event.session_id == repository.connection.execute(
-        "SELECT id FROM sessions WHERE source = 'codex' AND source_session_id = 'parent-session'"
-    ).fetchone()[0]
+    assert (
+        child_event.session_id
+        == repository.connection.execute(
+            "SELECT id FROM sessions WHERE source = 'codex' AND source_session_id = 'parent-session'"
+        ).fetchone()[0]
+    )
 
 
 def test_thread_history_supplies_turn_timing_only(
@@ -227,3 +233,101 @@ def test_state_thread_totals_are_never_imported(
     sync_codex(repository, roots)
 
     assert repository.source_total("codex").tokens == TokenUsage()
+
+
+def test_repeated_session_headers_and_interleaved_streams_keep_physical_deltas(
+    repository: Repository, tmp_path: Path
+) -> None:
+    roots = _roots(tmp_path)
+    _write_jsonl(
+        roots.sessions / "a.jsonl",
+        [
+            _session_meta("shared"),
+            _token_count(100, 10),
+            _session_meta("shared"),
+            _token_count(130, 30),
+        ],
+    )
+    _write_jsonl(
+        roots.sessions / "b.jsonl",
+        [
+            _session_meta("shared"),
+            _token_count(1000, 20),
+            _token_count(1040, 40),
+        ],
+    )
+    sync_codex(repository, roots)
+    assert repository.source_total("codex").tokens.input == 100
+    assert repository.connection.execute(
+        "SELECT source_sequence FROM observations WHERE source = 'codex' "
+        "AND event_type = 'token_count' ORDER BY artifact_id, ordinal"
+    ).fetchall() == [(0,), (1,), (0,), (1,)]
+
+
+def test_compacted_replay_retains_original_counter_context(
+    repository: Repository, tmp_path: Path
+) -> None:
+    roots = _roots(tmp_path)
+    path = roots.sessions / "history.jsonl"
+    header = _session_meta("compacted")
+    first, middle, final = (
+        _token_count(10, 10),
+        _token_count(20, 10),
+        _token_count(30, 10),
+    )
+    _write_jsonl(path, [header, first, middle, final])
+    sync_codex(repository, roots)
+    before = repository.profile_reporting_rows()
+    _write_jsonl(path, [header, first, final])
+    sync_codex(repository, roots)
+    assert repository.profile_reporting_rows() == before
+    assert repository.source_total("codex").tokens.input == 30
+    assert repository.connection.execute(
+        "SELECT COUNT(*) FROM issues WHERE category = 'conflicting_counter_context'"
+    ).fetchone() == (1,)
+    assert sync_codex(repository, roots).events_updated == 0
+
+
+def test_compacted_unchanged_counter_does_not_become_new_usage(
+    repository: Repository, tmp_path: Path
+) -> None:
+    roots = _roots(tmp_path)
+    path = roots.sessions / "unchanged.jsonl"
+    first, repeated = _token_count(10, 10), _token_count(10, 10)
+    repeated["timestamp"] = "2026-08-29T00:00:01Z"
+    header = _session_meta("unchanged")
+    _write_jsonl(path, [header, first, repeated])
+    sync_codex(repository, roots)
+    before = repository.profile_reporting_rows()
+    _write_jsonl(path, [header, repeated])
+    sync_codex(repository, roots)
+    assert repository.profile_reporting_rows() == before
+    assert repository.source_total("codex").tokens.input == 10
+
+
+def test_identical_usage_after_reset_counts_each_physical_occurrence_once(
+    repository: Repository, tmp_path: Path
+) -> None:
+    roots = _roots(tmp_path)
+    records = [
+        _session_meta("repeated"),
+        _token_count(10, 10),
+        _token_count(0, 0),
+        _token_count(10, 10),
+        _token_count(10, 10),
+    ]
+    path = roots.sessions / "repeat.jsonl"
+    _write_jsonl(path, records)
+    sync_codex(repository, roots)
+    assert repository.source_total("codex").tokens.input == 20
+    _write_jsonl(roots.sessions / "copy.jsonl", records)
+    sync_codex(repository, roots)
+    assert repository.source_total("codex").tokens.input == 20
+    before = repository.profile_reporting_rows()
+    _write_jsonl(path, [records[0], records[-1]])
+    (roots.sessions / "copy.jsonl").unlink()
+    sync_codex(repository, roots)
+    assert repository.profile_reporting_rows() == before
+    _write_jsonl(path, records)
+    sync_codex(repository, roots)
+    assert repository.profile_reporting_rows() == before

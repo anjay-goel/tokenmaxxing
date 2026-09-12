@@ -936,3 +936,32 @@ def test_profile_errors_are_useful_and_debug_can_reraise(
     with pytest.raises(ValueError) as raised:
         cli.main(["--debug", *command])
     assert raised.value is expected
+
+
+def test_sync_rebuild_restores_collected_usage_without_source_files(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from tokenmaxxing.cli import main
+    from tokenmaxxing.ingest.pi import sync_pi
+    from pi_support import _header, _assistant, _write_jsonl
+
+    path = tmp_path / 'usage.sqlite3'
+    session = tmp_path / 'old.jsonl'
+    _write_jsonl(session, [_header('retained'), _assistant('first', 10, 2)])
+    database = Database.open(path)
+    try:
+        repository = Repository(database)
+        sync_pi(repository, session)
+        before = repository.profile_reporting_rows()
+        database.connection.execute("UPDATE usage_events SET status='excluded'")
+    finally:
+        database.close()
+    session.unlink()
+    assert main(['--db', str(path), 'sync', '--source', 'pi', '--pi-root',
+                 str(tmp_path / 'missing'), '--rebuild', '--json']) == 0
+    assert json.loads(capsys.readouterr().out)['history_rebuilt'] is True
+    database = Database.open(path)
+    try:
+        assert Repository(database).profile_reporting_rows() == before
+    finally:
+        database.close()

@@ -320,7 +320,7 @@ def test_v2_session_version_is_rejected_before_source_data_is_read(
     with pytest.raises(ValueError, match="unsupported OpenCode V1 schema"):
         sync_opencode(repository, OpenCodeRoots.from_data_dir(path.parent))
 
-def test_same_source_is_a_noop_but_correction_replaces_usage_exactly(
+def test_same_source_is_a_noop_and_lower_correction_preserves_usage(
     repository: Repository, tmp_path: Path
 ) -> None:
     path = _source_database(tmp_path)
@@ -357,13 +357,13 @@ def test_same_source_is_a_noop_but_correction_replaces_usage_exactly(
     assert repeated.events_updated == 0
     assert corrected.events_updated == 1
     assert event is not None
-    assert event.tokens.input == 1
-    assert event.tokens.output == 1
-    assert event.tokens.reported_total == 2
-    assert event.cost.total_nanos is None
+    assert event.tokens.input == 10
+    assert event.tokens.output == 6
+    assert event.tokens.reported_total == 20
+    assert event.cost.total_nanos == 123
 
 
-def test_deleted_and_reappearing_parts_are_excluded_then_restored(
+def test_deleted_and_reappearing_parts_retain_usage_without_fallback_duplication(
     repository: Repository, tmp_path: Path
 ) -> None:
     path = _source_database(tmp_path)
@@ -378,14 +378,15 @@ def test_deleted_and_reappearing_parts_are_excluded_then_restored(
     sync_opencode(repository, OpenCodeRoots.from_data_dir(path.parent))
 
     missing = repository.get_event("opencode:part:part-1")
-    assert missing is not None and missing.status == "excluded"
+    assert missing is not None and missing.status == "canonical"
+    assert repository.source_total("opencode").tokens.derived_total == 20
     with sqlite3.connect(path) as source:
         _step_finish(source, "part-1", "message-1", "session-1")
-    restored = sync_opencode(repository, OpenCodeRoots.from_data_dir(path.parent))
+    sync_opencode(repository, OpenCodeRoots.from_data_dir(path.parent))
 
     event = repository.get_event("opencode:part:part-1")
     fallback = repository.get_event("opencode:message:message-1")
-    assert restored.events_updated == 2
+    assert repository.source_total("opencode").tokens.derived_total == 20
     assert event is not None and event.status == "canonical"
     assert fallback is not None and fallback.status == "excluded"
 
@@ -496,3 +497,181 @@ def test_active_wal_rows_are_visible_to_the_read_only_importer(
     assert repository.get_event("opencode:part:part-1") is not None
     assert Path(f"{path}-wal").exists()
     source.close()
+
+
+def test_fallback_upgrade_keeps_larger_snapshot_and_survives_source_cleanup(
+    repository: Repository, tmp_path: Path
+) -> None:
+    path = _source_database(tmp_path)
+    with sqlite3.connect(path) as source:
+        _session(source, "s")
+        _assistant_message(source, "m", "s")
+        source.execute("UPDATE message SET data = json_set(data, '$.tokens.input', 50)")
+    sync_opencode(repository, OpenCodeRoots(path))
+    with sqlite3.connect(path) as source:
+        _step_finish(source, "p1", "m", "s")
+    sync_opencode(repository, OpenCodeRoots(path))
+    assert repository.source_total("opencode").tokens.derived_total == 50
+    with sqlite3.connect(path) as source:
+        _step_finish(source, "p2", "m", "s", input_tokens=40)
+    sync_opencode(repository, OpenCodeRoots(path))
+    assert repository.source_total("opencode").tokens.derived_total == 70
+    with sqlite3.connect(path) as source:
+        source.execute("DELETE FROM part")
+        source.execute("DELETE FROM message")
+        source.execute("DELETE FROM session")
+    sync_opencode(repository, OpenCodeRoots(path))
+    assert repository.source_total("opencode").tokens.derived_total == 70
+
+
+def test_recovery_restores_largest_stored_snapshot_without_source(
+    repository: Repository, tmp_path: Path
+) -> None:
+    from tokenmaxxing.ingest.opencode import recover_opencode_history
+
+    path = _source_database(tmp_path)
+    with sqlite3.connect(path) as source:
+        _session(source, "s")
+        _assistant_message(source, "m", "s")
+        _step_finish(source, "p", "m", "s")
+    sync_opencode(repository, OpenCodeRoots(path))
+    repository.connection.execute(
+        "UPDATE usage_events SET status = 'excluded', input_tokens = 1, output_tokens = 1, "
+        "reasoning_tokens = 0, cache_read_tokens = 0, cache_write_tokens = 0, "
+        "reported_total_tokens = 2, derived_total_tokens = 2, total_cost_nanos = NULL, "
+        "completed_at_ns = NULL"
+    )
+    repository.connection.commit()
+    path.unlink()
+    assert recover_opencode_history(repository) == 1
+    event = repository.get_event("opencode:part:p")
+    assert event is not None and event.status == "canonical"
+    assert event.tokens.derived_total == 20
+    assert event.tokens.input == 10 and event.tokens.output == 6
+    assert event.cost.total_nanos == 123
+    assert event.completed_at_ns == 30_000_000
+    assert recover_opencode_history(repository) == 0
+
+
+def test_recovery_does_not_guess_legacy_part_and_fallback_overlap(
+    repository: Repository, tmp_path: Path
+) -> None:
+    from tokenmaxxing.ingest.opencode import recover_opencode_history
+
+    path = _source_database(tmp_path)
+    with sqlite3.connect(path) as source:
+        _session(source, "s")
+        _assistant_message(source, "m", "s")
+        source.execute("UPDATE message SET data = json_set(data, '$.tokens.input', 50)")
+    sync_opencode(repository, OpenCodeRoots(path))
+    with sqlite3.connect(path) as source:
+        _step_finish(source, "p", "m", "s")
+    sync_opencode(repository, OpenCodeRoots(path))
+    repository.connection.execute(
+        "UPDATE observations SET source_turn_id = 'opencode:part:p' WHERE event_type = 'part'"
+    )
+    repository.connection.commit()
+    path.unlink()
+    assert recover_opencode_history(repository) == 0
+    assert repository.source_total("opencode").tokens.derived_total == 50
+
+
+def test_pruned_metadata_does_not_move_collected_usage_to_new_date(
+    repository: Repository, tmp_path: Path
+) -> None:
+    path = _source_database(tmp_path)
+    with sqlite3.connect(path) as source:
+        _session(source, "s")
+        _assistant_message(source, "m", "s")
+        _step_finish(source, "p", "m", "s")
+    sync_opencode(repository, OpenCodeRoots(path))
+    with sqlite3.connect(path) as source:
+        source.execute(
+            "UPDATE message SET data = json_remove(data, '$.time.completed', '$.modelID', "
+            "'$.providerID'), time_updated = 100000000"
+        )
+    sync_opencode(repository, OpenCodeRoots(path))
+    event = repository.get_event("opencode:part:p")
+    assert event is not None
+    assert event.completed_at_ns == 30_000_000
+    assert event.model == "gpt-5" and event.provider == "openai"
+
+
+def test_larger_derived_revision_does_not_reduce_reported_usage(
+    repository: Repository, tmp_path: Path
+) -> None:
+    path = _source_database(tmp_path)
+    with sqlite3.connect(path) as source:
+        _session(source, "s")
+        _assistant_message(source, "m", "s")
+        _step_finish(source, "p", "m", "s", reported_total=1000)
+    sync_opencode(repository, OpenCodeRoots(path))
+    with sqlite3.connect(path) as source:
+        source.execute("UPDATE part SET data=json_set(data, '$.tokens.input', 100, '$.tokens.total', 110)")
+    sync_opencode(repository, OpenCodeRoots(path))
+    event = repository.get_event("opencode:part:p")
+    assert event is not None and event.tokens.reported_total == 1000
+
+
+def test_fallback_upgrade_preserves_reported_total_cost_and_date(
+    repository: Repository, tmp_path: Path
+) -> None:
+    path = _source_database(tmp_path)
+    with sqlite3.connect(path) as source:
+        _session(source, "s")
+        _assistant_message(source, "m", "s")
+        source.execute("UPDATE message SET data=json_set(data, '$.tokens.input', 10, '$.tokens.total', 1000, '$.cost', 0.01)")
+    sync_opencode(repository, OpenCodeRoots(path))
+    with sqlite3.connect(path) as source:
+        source.execute("UPDATE message SET data=json_set(data, '$.time.completed', 86400000)")
+        _step_finish(source, "p", "m", "s", reported_total=100, cost=0.001)
+    sync_opencode(repository, OpenCodeRoots(path))
+    fallback = repository.get_event("opencode:message:m")
+    assert fallback is not None and fallback.status == "canonical"
+    with sqlite3.connect(path) as source:
+        source.execute("UPDATE part SET data=json_set(data, '$.tokens.total', 2000, '$.cost', 0.02)")
+    sync_opencode(repository, OpenCodeRoots(path))
+    part = repository.get_event("opencode:part:p")
+    assert part is not None and part.status == "canonical"
+    assert part.completed_at_ns == 30_000_000
+
+
+def test_v1_pruned_part_does_not_double_count_new_ambiguous_fallback(
+    repository: Repository, tmp_path: Path
+) -> None:
+    path = _source_database(tmp_path)
+    with sqlite3.connect(path) as source:
+        _session(source, "s")
+        _assistant_message(source, "m", "s")
+        _step_finish(source, "p", "m", "s")
+        source.execute("UPDATE message SET data=json_set(data, '$.tokens.input', 20)")
+    sync_opencode(repository, OpenCodeRoots(path))
+    repository.connection.execute(
+        "UPDATE observations SET source_turn_id='opencode:part:p', "
+        "parser_version='opencode-sqlite-v1', stable_key='legacy:' || stable_key "
+        "WHERE event_type='part'"
+    )
+    with sqlite3.connect(path) as source:
+        source.execute("DELETE FROM part")
+    sync_opencode(repository, OpenCodeRoots(path))
+    assert repository.source_total("opencode").tokens.derived_total == 20
+    fallback = repository.get_event("opencode:message:m", source="opencode")
+    assert fallback is not None and fallback.status == "excluded"
+    assert repository.connection.execute(
+        "SELECT COUNT(*) FROM issues WHERE source='opencode' "
+        "AND category='ambiguous_legacy_message_overlap'"
+    ).fetchone()[0] == 1
+    assert repository.connection.execute(
+        "SELECT source_turn_id FROM observations WHERE event_type='part'"
+    ).fetchone()[0] == "opencode:part:p"
+    with sqlite3.connect(path) as source:
+        _session(source, "child", parent_id="s")
+        _assistant_message(source, "child-message", "child")
+        source.execute("UPDATE message SET data=json_set(data, '$.tokens.input', 5) WHERE id='child-message'")
+    sync_opencode(repository, OpenCodeRoots(path))
+    assert repository.source_total("opencode").tokens.derived_total == 25
+    with sqlite3.connect(path) as source:
+        _step_finish(source, "p", "m", "s")
+    sync_opencode(repository, OpenCodeRoots(path))
+    assert repository.source_total("opencode").tokens.derived_total == 25
+    assert sync_opencode(repository, OpenCodeRoots(path)).events_updated == 0

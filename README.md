@@ -24,11 +24,12 @@ tokenmaxxing profile init ~/my-token-profile
 ```
 
 The first sync scans historical records and can take a while. Later syncs are
-incremental and usually much faster.
+incremental and usually much faster. Imported history stays in the local ledger
+when harnesses delete, truncate, or replace their session files.
 
 ```text
 tokenmaxxing [--db PATH] [--debug] <command>
-|-- sync [--source all|codex|claude|pi|opencode] [--json]
+|-- sync [--source all|codex|claude|pi|opencode] [--rebuild] [--json]
 |-- stats [--period 7d|28d|all] [--group-by model|harness|day] [--json]
 |-- export [PATH] [--timezone ZONE]
 `-- profile [--config PATH] <command>
@@ -61,6 +62,11 @@ attachments, and raw errors are not copied into the database.
 
 Syncs are transactional, incremental, and idempotent. Totals prefer a
 source-reported total, then a derived total, then non-overlapping components.
+`tokenmaxxing sync --rebuild` reconstructs accounting from retained observations
+before importing new files. The reconstruction is atomic and works even when
+the original harness files are gone. Back up the SQLite ledger before repairing
+an older installation; usage never imported, or metadata never retained, cannot
+be recovered from this ledger.
 See [Setup](docs/setup.md) for paths, overrides, and backups, or
 [Architecture](docs/architecture.md) for the accounting rules.
 

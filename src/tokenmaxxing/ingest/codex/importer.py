@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import cast
 
@@ -16,6 +16,7 @@ from tokenmaxxing.ingest.jsonl import (
 )
 from tokenmaxxing.models import Projection, SyncStats, WriteStats
 from tokenmaxxing.repository import Repository
+
 
 @dataclass(frozen=True, slots=True)
 class CodexRoots:
@@ -136,10 +137,16 @@ def _resume_state(repository: Repository, path: Path) -> CodexState:
     ).fetchone()
     if row is None or not isinstance(row[1], str):
         return CodexState()
-    sequence = int(row[2] or 0)
+    sequence = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM observations WHERE source = 'codex' AND channel = 'disk' "
+            "AND artifact_id = ? AND source_session_id = ? AND event_type = 'token_count'",
+            (artifact.id, row[1]),
+        ).fetchone()[0]
+    )
     return CodexState(
         owner_session_id=str(row[1]),
-        owner_ordinal=sequence + int(row[0] == "token_count"),
+        owner_ordinal=sequence,
     )
 
 
@@ -155,9 +162,20 @@ def sync_codex(repository: Repository, roots: CodexRoots) -> SyncStats:
         def project(line: SourceLine, project_state: object) -> Projection:
             projection = project_codex_line(line, cast(CodexState, project_state))
             for observation in projection.observations:
-                if observation.event_type == "token_count" and observation.source_session_id:
+                if (
+                    observation.event_type == "token_count"
+                    and observation.source_session_id
+                ):
                     changed_owners.add(observation.source_session_id)
-            return projection
+            # Keep a finalized counter delta available if a replay adds ambiguous context.
+            events = tuple(
+                event
+                for event in projection.events
+                if (current := repository.get_event(event.event_key, source="codex"))
+                is None
+                or current.status != "canonical"
+            )
+            return replace(projection, events=events)
 
         stats = _add_stats(stats, scan_jsonl(repository, "codex", path, project, state))
     state_writes, state_owners = _import_state(repository, roots.state_db)
@@ -165,6 +183,6 @@ def sync_codex(repository: Repository, roots: CodexRoots) -> SyncStats:
     stats = _add_stats(stats, state_writes)
     stats = _add_stats(stats, _import_turns(repository, roots.thread_history_db))
     changed_owners.update(reconcile._provisional_owners(repository))
-    changed_owners.update(reconcile._stale_counted_owners(repository))
+    changed_owners.update(reconcile._legacy_owners(repository))
     stats = _add_stats(stats, reconcile._rebuild_owners(repository, changed_owners))
     return stats

@@ -117,7 +117,7 @@ def _stale_events(repository: Repository) -> set[str]:
 
 
 def _max_usage(rows: list[tuple[object, ...]]) -> tuple[TokenUsage, CostUsage]:
-    token_values: dict[str, int | None] = {name: None for name in _TOKEN_COLUMNS}
+    retained_tokens = TokenUsage()
     cost_values: dict[str, int | None] = {
         name: None for name in _COST_COLUMNS if name.endswith("_nanos")
     }
@@ -138,10 +138,13 @@ def _max_usage(rows: list[tuple[object, ...]]) -> tuple[TokenUsage, CostUsage]:
         if parsed is None:
             continue
         tokens, cost = parsed
-        for name in token_values:
-            candidate = getattr(tokens, name)
-            if candidate is not None:
-                token_values[name] = max(token_values[name] or 0, candidate)
+        candidate_reported = tokens.reported_total if tokens.reported_total is not None else tokens.derived_total or 0
+        retained_reported = retained_tokens.reported_total if retained_tokens.reported_total is not None else retained_tokens.derived_total or 0
+        if candidate_reported >= retained_reported and all(
+            (getattr(tokens, name) or 0) >= (getattr(retained_tokens, name) or 0)
+            for name in _TOKEN_COLUMNS if name != "reported_total"
+        ):
+            retained_tokens = tokens
         candidate_total = cost.total_nanos
         current_total = cost_values["total_nanos"]
         if candidate_total is not None and (
@@ -161,7 +164,7 @@ def _max_usage(rows: list[tuple[object, ...]]) -> tuple[TokenUsage, CostUsage]:
             if candidate is not None:
                 cost_values[name] = max(cost_values[name] or 0, candidate)
     return (
-        TokenUsage(**token_values),
+        retained_tokens,
         CostUsage(
             **cost_values,
             original_decimal=original_decimal,
@@ -230,10 +233,7 @@ def _rebuild_events(repository: Repository, event_keys: set[str]) -> WriteStats:
                 "o.observed_at_ns, o.event_type, o.projection_json FROM observations o "
                 "JOIN artifacts a ON a.id = o.artifact_id "
                 "WHERE o.source = 'pi' AND o.channel = 'disk' AND o.source_turn_id = ? "
-                "AND COALESCE(a.is_missing, 0) = 0 "
-                "AND a.generation = (SELECT MAX(current.generation) FROM artifacts current "
-                "WHERE current.source = a.source AND current.path_hash = a.path_hash) "
-                "ORDER BY o.observed_at_ns, o.artifact_id, o.ordinal",
+                "ORDER BY o.artifact_id, o.ordinal",
                 (event_key,),
             ).fetchall()
             if not rows:
@@ -244,7 +244,7 @@ def _rebuild_events(repository: Repository, event_keys: set[str]) -> WriteStats:
                 )
                 continue
             tokens, cost = _max_usage([tuple(row) for row in rows])
-            current = repository.get_event(event_key)
+            current = repository.get_event(event_key, source="pi")
             if current is None:
                 continue
             session_source_id = next(
@@ -276,9 +276,9 @@ def _rebuild_events(repository: Repository, event_keys: set[str]) -> WriteStats:
                 completed_at_ns=(
                     current.completed_at_ns
                     if str(rows[0][4]) == "subagent_snapshot"
-                    else max(
-                        (int(row[3]) for row in rows if isinstance(row[3], int)),
-                        default=current.completed_at_ns,
+                    else next(
+                        (int(row[3]) for row in rows if isinstance(row[3], int) and row[3] > 0),
+                        current.completed_at_ns,
                     )
                 ),
                 success=current.success,

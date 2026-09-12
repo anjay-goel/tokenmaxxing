@@ -47,14 +47,24 @@ class Database:
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
-        self.connection.execute("BEGIN IMMEDIATE")
+        nested = self.connection.in_transaction
+        self.connection.execute(
+            "SAVEPOINT tokenmaxxing_transaction" if nested else "BEGIN IMMEDIATE"
+        )
         try:
             yield self.connection
         except BaseException:
-            self.connection.rollback()
+            if nested:
+                self.connection.execute("ROLLBACK TO tokenmaxxing_transaction")
+                self.connection.execute("RELEASE tokenmaxxing_transaction")
+            else:
+                self.connection.rollback()
             raise
         else:
-            self.connection.commit()
+            if nested:
+                self.connection.execute("RELEASE tokenmaxxing_transaction")
+            else:
+                self.connection.commit()
 
     def object_names(self) -> set[str]:
         rows = self.connection.execute(

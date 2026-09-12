@@ -161,10 +161,7 @@ def _rebuild_messages(repository: Repository, messages: set[str]) -> WriteStats:
                 "JOIN artifacts a ON a.id = o.artifact_id "
                 "WHERE o.source = 'claude' AND o.channel = 'disk' "
                 f"AND o.source_turn_id IN ({placeholders}) "
-                "AND COALESCE(a.is_missing, 0) = 0 "
-                "AND a.generation = (SELECT MAX(current.generation) FROM artifacts current "
-                "WHERE current.source = a.source AND current.path_hash = a.path_hash) "
-                "ORDER BY o.source_turn_id, o.observed_at_ns, o.artifact_id, o.ordinal",
+                "ORDER BY o.source_turn_id, o.artifact_id, o.ordinal",
                 tuple(message_chunk),
             ).fetchall()
         )
@@ -196,6 +193,7 @@ def _rebuild_messages(repository: Repository, messages: set[str]) -> WriteStats:
             completed_at_ns = 0
             search_count: int | None = None
             fetch_count: int | None = None
+            coherent_usage = None
             for (
                 _,
                 session_value,
@@ -210,8 +208,8 @@ def _rebuild_messages(repository: Repository, messages: set[str]) -> WriteStats:
                     run_source_id = run_value
                 if isinstance(stable_key, str):
                     observations.append(stable_key)
-                if isinstance(observed_at, int):
-                    completed_at_ns = max(completed_at_ns, observed_at)
+                if isinstance(observed_at, int) and observed_at > 0 and not completed_at_ns:
+                    completed_at_ns = observed_at
                 projection = json.loads(str(projection_text))
                 usage_projection = (
                     projection.get("usage") if isinstance(projection, dict) else None
@@ -241,6 +239,15 @@ def _rebuild_messages(repository: Repository, messages: set[str]) -> WriteStats:
                     advisors[index] = advisors.get(index, False) or iteration.get(
                         "is_advisor"
                     ) is True
+                if not _residual(outer, [
+                    (iteration_usage[index], advisors.get(index, False))
+                    for index in sorted(iteration_usage)
+                ])[1]:
+                    coherent_usage = (
+                        dict(outer),
+                        {index: dict(usage) for index, usage in iteration_usage.items()},
+                        dict(advisors),
+                    )
 
             canonical_session_id, run_id = _session_and_run_ids(
                 repository, session_id, run_source_id
@@ -248,6 +255,18 @@ def _rebuild_messages(repository: Repository, messages: set[str]) -> WriteStats:
             base_key = f"claude:{semantic_id}"
             desired: list[tuple[str, TokenUsage, str, str | None]] = []
             conflict = False
+            retained_conflict = _residual(outer, [
+                (iteration_usage[index], advisors.get(index, False))
+                for index in sorted(iteration_usage)
+            ])[1]
+            if retained_conflict and coherent_usage is not None:
+                retained_advisors = {
+                    index: usage for index, usage in iteration_usage.items()
+                    if advisors.get(index, False)
+                }
+                outer, iteration_usage, advisors = coherent_usage
+                iteration_usage.update(retained_advisors)
+                advisors.update({index: True for index in retained_advisors})
             if iteration_usage:
                 normalized_iterations = [
                     (iteration_usage[index], advisors.get(index, False))
@@ -381,7 +400,7 @@ def _rebuild_messages(repository: Repository, messages: set[str]) -> WriteStats:
                         web_search_count=event_search_count,
                         web_fetch_count=event_fetch_count,
                     )
-            if conflict:
+            if conflict or retained_conflict:
                 issue_write = repository.apply_projection_in_transaction(
                     connection,
                     Projection(
@@ -454,4 +473,3 @@ def _stale_counted_messages(repository: Repository) -> set[str]:
         "WHERE current.source = a.source AND current.path_hash = a.path_hash)))"
     ).fetchall()
     return {str(row[0]) for row in rows}
-

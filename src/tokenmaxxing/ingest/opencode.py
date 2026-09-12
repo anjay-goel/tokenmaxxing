@@ -4,12 +4,13 @@ import re
 import sqlite3
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 
 from tokenmaxxing.models import (
     CostUsage,
+    IssueDraft,
     LinkDraft,
     ObservationDraft,
     Projection,
@@ -23,7 +24,7 @@ from tokenmaxxing.models import (
 from tokenmaxxing.repository import Repository
 
 
-_PARSER_VERSION = "opencode-sqlite-v1"
+_PARSER_VERSION = "opencode-sqlite-v2"
 _REQUIRED_COLUMNS = {
     "session": {
         "id",
@@ -62,6 +63,7 @@ class OpenCodeRoots:
 @dataclass(frozen=True, slots=True)
 class _UsageRow:
     source_id: str
+    message_id: str
     event_key: str
     event_type: str
     session_id: str
@@ -90,6 +92,7 @@ class _UsageRow:
         return {
             "event_type": self.event_type,
             "source_id": self.source_id,
+            "message_id": self.message_id,
             "session_id": self.session_id,
             "provider": self.provider,
             "model": self.model,
@@ -202,7 +205,7 @@ def _source_rows(source: sqlite3.Connection) -> list[_UsageRow]:
         "json_extract(p.data, '$.tokens.input'), json_extract(p.data, '$.tokens.output'), "
         "json_extract(p.data, '$.tokens.reasoning'), json_extract(p.data, '$.tokens.total'), "
         "json_extract(p.data, '$.tokens.cache.read'), json_extract(p.data, '$.tokens.cache.write'), "
-        "p.data -> '$.cost' "
+        "p.data -> '$.cost', m.id "
         "FROM part p JOIN message m ON m.id = p.message_id "
         "JOIN session s ON s.id = m.session_id "
         "WHERE json_extract(p.data, '$.type') = 'step-finish' "
@@ -216,7 +219,7 @@ def _source_rows(source: sqlite3.Connection) -> list[_UsageRow]:
         "json_extract(m.data, '$.tokens.input'), json_extract(m.data, '$.tokens.output'), "
         "json_extract(m.data, '$.tokens.reasoning'), json_extract(m.data, '$.tokens.total'), "
         "json_extract(m.data, '$.tokens.cache.read'), json_extract(m.data, '$.tokens.cache.write'), "
-        "m.data -> '$.cost' "
+        "m.data -> '$.cost', m.id "
         "FROM message m JOIN session s ON s.id = m.session_id "
         "WHERE json_extract(m.data, '$.role') = 'assistant' "
         "AND NOT EXISTS (SELECT 1 FROM part p WHERE p.message_id = m.id "
@@ -234,6 +237,7 @@ def _source_rows(source: sqlite3.Connection) -> list[_UsageRow]:
 def _usage_row(row: tuple[object, ...], *, event_type: str, event_key: str) -> _UsageRow:
     return _UsageRow(
         source_id=str(row[0]),
+        message_id=str(row[13]),
         event_key=event_key,
         event_type=event_type,
         session_id=str(row[1]),
@@ -336,11 +340,28 @@ def _event_is_current(
         "WHERE source = 'opencode' AND event_key = ?",
         (row.event_key,),
     ).fetchone()
-    return observation is not None and event == ("canonical", session_id, run_id)
+    return (
+        observation is not None and event is not None
+        and event[1:] == (session_id, run_id)
+    )
 
+
+
+def _token_totals(tokens: TokenUsage) -> tuple[int, ...]:
+    return (
+        tokens.reported_total if tokens.reported_total is not None else tokens.derived_total or 0,
+        tokens.derived_total or 0,
+        tokens.input or 0, tokens.output or 0, tokens.reasoning or 0,
+        tokens.cache_read or 0, tokens.cache_write or 0,
+    )
+
+
+def _dominates(candidate: tuple[int, ...], previous: tuple[int, ...]) -> bool:
+    return all(new >= old for new, old in zip(candidate, previous, strict=True))
 
 def _projection(
-    row: _UsageRow, session_id: int | None, run_id: int | None
+    row: _UsageRow, session_id: int | None, run_id: int | None,
+    previous: UsageEventDraft | None = None,
 ) -> Projection:
     observation = ObservationDraft(
         source="opencode",
@@ -356,10 +377,12 @@ def _projection(
                 "reasoning": row.reasoning_tokens,
                 "cache_read": row.cache_read,
                 "cache_write": row.cache_write,
+                "reported_total": row.reported_total,
+                "cost_nanos": row.cost_usage().total_nanos,
             }
         },
         source_session_id=row.session_id,
-        source_turn_id=row.event_key,
+        source_turn_id=f"opencode:message:{row.message_id}",
     )
     event = UsageEventDraft(
         source="opencode",
@@ -377,6 +400,12 @@ def _projection(
         replace_usage=True,
         replace_metadata_fields=_METADATA_FIELDS,
     )
+    if previous is not None:
+        event = replace(event, status=previous.status, completed_at_ns=previous.completed_at_ns or row.completed_at_ns)
+        if not _dominates(_token_totals(event.tokens), _token_totals(previous.tokens)):
+            event = replace(event, tokens=previous.tokens)
+        if (previous.cost.total_nanos or 0) > (event.cost.total_nanos or 0):
+            event = replace(event, cost=previous.cost)
     link = LinkDraft(
         source="opencode",
         channel="disk",
@@ -400,6 +429,127 @@ def _add_stats(total: SyncStats, writes: WriteStats) -> SyncStats:
     )
 
 
+def _reconcile_messages(connection: sqlite3.Connection) -> int:
+    groups: dict[str, set[str]] = {}
+    for event_key, message_key in connection.execute(
+        "SELECT e.event_key, o.source_turn_id FROM observations o "
+        "JOIN observation_links l ON l.observation_id = o.id "
+        "JOIN usage_events e ON e.id = l.usage_event_id "
+        "WHERE o.source = 'opencode' AND o.source_turn_id LIKE 'opencode:message:%' "
+        "AND e.event_key LIKE 'opencode:part:%'"
+    ):
+        groups.setdefault(message_key, set()).add(event_key)
+    changed = 0
+    for message_key, part_keys in groups.items():
+        keys = [message_key, *sorted(part_keys)]
+        placeholders = ",".join("?" for _ in keys)
+        totals = {
+            row[0]: tuple(row[2:])
+            for row in connection.execute(
+                "SELECT event_key, status, COALESCE(reported_total_tokens, derived_total_tokens, 0), "
+                "COALESCE(derived_total_tokens, 0), COALESCE(input_tokens, 0), "
+                "COALESCE(output_tokens, 0), COALESCE(reasoning_tokens, 0), "
+                "COALESCE(cache_read_tokens, 0), COALESCE(cache_write_tokens, 0), "
+                "COALESCE(total_cost_nanos, 0) FROM usage_events "
+                f"WHERE source = 'opencode' AND event_key IN ({placeholders})", keys
+            )
+        }
+        fallback_total = totals.get(message_key, (0,) * 8)
+        part_total = tuple(sum(totals.get(key, (0,) * 8)[index] for key in part_keys)
+                           for index in range(8))
+        if _dominates(part_total, fallback_total):
+            parts_win = True
+        elif _dominates(fallback_total, part_total):
+            parts_win = False
+        else:
+            fallback = connection.execute(
+                "SELECT status FROM usage_events WHERE source = 'opencode' AND event_key = ?",
+                (message_key,),
+            ).fetchone()
+            parts_win = fallback != ("canonical",)
+        for key in keys:
+            status = "canonical" if ((key != message_key) == parts_win) else "excluded"
+            changed += connection.execute(
+                "UPDATE usage_events SET status = ? WHERE source = 'opencode' "
+                "AND event_key = ? AND status != ?", (status, key, status)
+            ).rowcount
+    return changed
+
+
+def recover_opencode_history(repository: Repository) -> int:
+    """Restore retained numeric snapshots; leave ambiguous legacy overlaps excluded."""
+    connection = repository.connection
+    before = dict(connection.execute(
+        "SELECT event_key, json_array(status, input_tokens, output_tokens, reasoning_tokens, "
+        "cache_read_tokens, cache_write_tokens, reported_total_tokens, derived_total_tokens, "
+        "total_cost_nanos, completed_at_ns) FROM usage_events WHERE source = 'opencode'"
+    ))
+    observations: dict[str, list[tuple[str | None, str | None, str, int]]] = {}
+    for key, source_session, source_turn, projection, observed_at in connection.execute(
+        "SELECT e.event_key, o.source_session_id, o.source_turn_id, o.projection_json, "
+        "o.observed_at_ns FROM observations o "
+        "JOIN observation_links l ON l.observation_id = o.id "
+        "JOIN usage_events e ON e.id = l.usage_event_id WHERE o.source = 'opencode'"
+    ):
+        observations.setdefault(key, []).append((source_session, source_turn, projection, observed_at))
+    session_keys: dict[str, set[str]] = {}
+    for key, snapshots in observations.items():
+        for session, _, _, _ in snapshots:
+            if session:
+                session_keys.setdefault(session, set()).add(key)
+    with repository.transaction():
+        for key, snapshots in observations.items():
+            event = repository.get_event(key, source="opencode")
+            if event is None:
+                continue
+            tokens = event.tokens
+            cost = event.cost
+            for _, _, encoded, _ in snapshots:
+                usage = json.loads(encoded).get("usage", {})
+                if not isinstance(usage, dict):
+                    continue
+                candidate = TokenUsage(
+                    input=_nonnegative_int(usage.get("input")),
+                    output=_nonnegative_int(usage.get("output")) + _nonnegative_int(usage.get("reasoning")),
+                    reasoning=_nonnegative_int(usage.get("reasoning")),
+                    cache_read=_nonnegative_int(usage.get("cache_read")),
+                    cache_write=_nonnegative_int(usage.get("cache_write")),
+                    reported_total=usage.get("reported_total"),
+                    derived_total=sum(_nonnegative_int(usage.get(field)) for field in
+                                      ("input", "output", "reasoning", "cache_read", "cache_write")),
+                )
+                if _dominates(_token_totals(candidate), _token_totals(tokens)):
+                    tokens = candidate
+                nanos = _nonnegative_int(usage.get("cost_nanos"))
+                if nanos > (cost.total_nanos or 0):
+                    cost = CostUsage(total_nanos=nanos, source="opencode_reported_estimate", estimated=True)
+            completed_at = event.completed_at_ns or next(
+                (observed for _, _, _, observed in snapshots if observed > 0), None
+            )
+            status = event.status
+            opposite_prefix = "opencode:message:" if key.startswith("opencode:part:") else "opencode:part:"
+            possible_overlap = any(
+                other.startswith(opposite_prefix)
+                for session, _, _, _ in snapshots
+                for other in session_keys.get(session or "", set())
+            )
+            if not possible_overlap:
+                status = "canonical"
+            if (tokens != event.tokens or cost != event.cost or status != event.status
+                    or completed_at != event.completed_at_ns):
+                repository.apply_projection_in_transaction(connection, Projection(events=(replace(
+                    event, tokens=tokens, cost=cost, status=status, replace_usage=True,
+                    completed_at_ns=completed_at,
+                ),)))
+        _reconcile_messages(connection)
+    after = dict(connection.execute(
+        "SELECT event_key, json_array(status, input_tokens, output_tokens, reasoning_tokens, "
+        "cache_read_tokens, cache_write_tokens, reported_total_tokens, derived_total_tokens, "
+        "total_cost_nanos, completed_at_ns) FROM usage_events WHERE source = 'opencode'"
+    ))
+    return sum(before.get(key) != value for key, value in after.items())
+
+
 def sync_opencode(repository: Repository, roots: OpenCodeRoots) -> SyncStats:
     if not roots.database.is_file():
         return SyncStats()
@@ -413,25 +563,58 @@ def sync_opencode(repository: Repository, roots: OpenCodeRoots) -> SyncStats:
             connection, Projection(sessions=sessions, runs=_run_drafts(sessions))
         )
         stats = _add_stats(stats, session_writes)
-        seen = {row.event_key for row in rows}
         for row in rows:
             session_id = _root_database_id(repository, row.session_id)
             run_id = _run_database_id(repository, row.session_id)
             if _event_is_current(repository, row, session_id, run_id):
                 continue
+            previous = repository.get_event(row.event_key, source="opencode")
+            projection = _projection(row, session_id, run_id, previous)
+            event = projection.events[0]
+            if previous is None:
+                message_key = f"opencode:message:{row.message_id}"
+                anchor = connection.execute(
+                    "SELECT e.completed_at_ns FROM usage_events e "
+                    "LEFT JOIN observation_links l ON l.usage_event_id = e.id "
+                    "LEFT JOIN observations o ON o.id = l.observation_id "
+                    "WHERE e.source = 'opencode' AND e.completed_at_ns IS NOT NULL "
+                    "AND (e.event_key = ? OR o.source_turn_id = ?) ORDER BY e.id LIMIT 1",
+                    (message_key, message_key),
+                ).fetchone()
+                if anchor:
+                    event = replace(event, completed_at_ns=anchor[0])
+                if row.event_type == "message":
+                    known_parts = connection.execute(
+                        "SELECT 1 FROM observations WHERE source = 'opencode' "
+                        "AND event_type = 'part' AND source_turn_id = ? LIMIT 1",
+                        (row.event_key,),
+                    ).fetchone()
+                    if known_parts:
+                        event = replace(event, status="excluded")
+                    else:
+                        legacy_overlap = connection.execute(
+                            "SELECT 1 FROM observations o "
+                            "JOIN observation_links l ON l.observation_id = o.id "
+                            "JOIN usage_events e ON e.id = l.usage_event_id "
+                            "WHERE o.source = 'opencode' AND o.event_type = 'part' "
+                            "AND o.source_session_id = ? AND e.status IN ('canonical', 'provisional') "
+                            "AND NOT EXISTS (SELECT 1 FROM observations known "
+                            "JOIN observation_links kl ON kl.observation_id = known.id "
+                            "WHERE kl.usage_event_id = e.id AND known.source = 'opencode' "
+                            "AND known.source_turn_id LIKE 'opencode:message:%') LIMIT 1",
+                            (row.session_id,),
+                        ).fetchone()
+                        if legacy_overlap:
+                            event = replace(event, status="excluded")
+                            projection = replace(projection, issues=(IssueDraft(
+                                source="opencode", category="ambiguous_legacy_message_overlap",
+                                severity="warning", identifier=row.event_key, observed_type="usage",
+                            ),))
+            projection = replace(projection, events=(event,))
             stats = _add_stats(
-                stats,
-                repository.apply_projection_in_transaction(
-                    connection, _projection(row, session_id, run_id)
-                ),
+                stats, repository.apply_projection_in_transaction(connection, projection)
             )
-        placeholders = ", ".join("?" for _ in seen)
-        query = "UPDATE usage_events SET status = 'excluded' WHERE source = 'opencode' AND status != 'excluded'"
-        parameters: tuple[str, ...] = ()
-        if placeholders:
-            query += f" AND event_key NOT IN ({placeholders})"
-            parameters = tuple(sorted(seen))
-        changed = connection.execute(query, parameters).rowcount
+        changed = _reconcile_messages(connection)
         if changed:
             stats = SyncStats(
                 artifacts_seen=stats.artifacts_seen,

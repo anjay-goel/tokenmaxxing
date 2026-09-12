@@ -146,3 +146,14 @@ def _create_thread_history_db(path: Path) -> None:
     )
     connection.commit()
     connection.close()
+
+
+def _event(repository, owner: str, sequence: int):
+    row = repository.connection.execute(
+        "SELECT e.event_key FROM observations o JOIN observation_links l ON l.observation_id = o.id "
+        "JOIN usage_events e ON e.id = l.usage_event_id WHERE o.source = 'codex' "
+        "AND o.source_session_id = ? AND o.source_sequence = ? "
+        "AND e.event_key LIKE '%:usage:%' ORDER BY o.artifact_id, o.ordinal LIMIT 1",
+        (owner, sequence),
+    ).fetchone()
+    return repository.get_event(row[0]) if row else None

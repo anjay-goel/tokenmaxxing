@@ -113,6 +113,10 @@ def build_parser() -> argparse.ArgumentParser:
     sync.add_argument("--pi-root", type=Path)
     sync.add_argument("--opencode-db", type=Path)
     sync.add_argument("--json", action="store_true")
+    sync.add_argument(
+        "--rebuild", action="store_true",
+        help="reconstruct history from retained observations before importing files",
+    )
 
     stats = commands.add_parser("stats")
     stats.add_argument(
@@ -317,6 +321,10 @@ def _sync(arguments: argparse.Namespace) -> int:
     database = Database.open(arguments.db)
     try:
         with status:
+            if arguments.rebuild:
+                from tokenmaxxing.history import rebuild_history
+
+                rebuild_history(Repository(database), selected)
             results = sync_sources(
                 Repository(database),
                 _roots(arguments),
@@ -326,7 +334,10 @@ def _sync(arguments: argparse.Namespace) -> int:
     finally:
         database.close()
     if arguments.json:
-        print(json.dumps(_sync_payload(results), sort_keys=True))
+        payload = _sync_payload(results)
+        if arguments.rebuild:
+            payload["history_rebuilt"] = True
+        print(json.dumps(payload, sort_keys=True))
         return 1 if any(result.status == "error" for result in results) else 0
     for result in results:
         if result.status == "error":

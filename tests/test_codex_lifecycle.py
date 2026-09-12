@@ -15,6 +15,7 @@ from tokenmaxxing.models import (
 )
 from tokenmaxxing.repository import Repository
 from codex_support import (
+    _event,
     _copy,
     _create_state_db,
     _roots,
@@ -49,7 +50,7 @@ def test_incremental_append_restores_the_current_owner(
     assert repository.source_total("codex").tokens == TokenUsage(input=115, output=12)
 
 
-def test_replacement_excludes_stale_owner_and_restores_reappearance(
+def test_replacement_retains_each_owner_and_deduplicates_reappearance(
     repository: Repository, tmp_path: Path
 ) -> None:
     roots = _roots(tmp_path)
@@ -62,23 +63,23 @@ def test_replacement_excludes_stale_owner_and_restores_reappearance(
     _write_jsonl(rollout, new_records)
     sync_codex(repository, roots)
 
-    old_event = repository.get_event("codex:old-owner:0")
-    new_event = repository.get_event("codex:new-owner:0")
-    assert old_event is not None and old_event.status == "excluded"
+    old_event = _event(repository, "old-owner", 0)
+    new_event = _event(repository, "new-owner", 0)
+    assert old_event is not None and old_event.status == "canonical"
     assert new_event is not None and new_event.status == "canonical"
-    assert repository.source_total("codex").tokens.input == 20
+    assert repository.source_total("codex").tokens.input == 30
 
     _write_jsonl(rollout, old_records)
     sync_codex(repository, roots)
 
-    old_event = repository.get_event("codex:old-owner:0")
-    new_event = repository.get_event("codex:new-owner:0")
+    old_event = _event(repository, "old-owner", 0)
+    new_event = _event(repository, "new-owner", 0)
     assert old_event is not None and old_event.status == "canonical"
-    assert new_event is not None and new_event.status == "excluded"
-    assert repository.source_total("codex").tokens.input == 10
+    assert new_event is not None and new_event.status == "canonical"
+    assert repository.source_total("codex").tokens.input == 30
 
 
-def test_truncated_or_missing_rollout_excludes_and_restores_owner(
+def test_truncated_or_missing_rollout_preserves_owner(
     repository: Repository, tmp_path: Path
 ) -> None:
     roots = _roots(tmp_path)
@@ -90,31 +91,31 @@ def test_truncated_or_missing_rollout_excludes_and_restores_owner(
     _write_jsonl(rollout, records[:1])
     sync_codex(repository, roots)
 
-    event = repository.get_event("codex:old-owner:0")
-    assert event is not None and event.status == "excluded"
-    assert repository.source_total("codex").tokens.input is None
+    event = _event(repository, "old-owner", 0)
+    assert event is not None and event.status == "canonical"
+    assert repository.source_total("codex").tokens.input == 10
 
     _write_jsonl(rollout, records)
     sync_codex(repository, roots)
-    event = repository.get_event("codex:old-owner:0")
+    event = _event(repository, "old-owner", 0)
     assert event is not None and event.status == "canonical"
 
     rollout.unlink()
     sync_codex(repository, roots)
 
-    event = repository.get_event("codex:old-owner:0")
-    assert event is not None and event.status == "excluded"
-    assert repository.source_total("codex").tokens.input is None
+    event = _event(repository, "old-owner", 0)
+    assert event is not None and event.status == "canonical"
+    assert repository.source_total("codex").tokens.input == 10
 
     _write_jsonl(rollout, records)
     sync_codex(repository, roots)
 
-    event = repository.get_event("codex:old-owner:0")
+    event = _event(repository, "old-owner", 0)
     assert event is not None and event.status == "canonical"
     assert repository.source_total("codex").tokens.input == 10
 
 
-def test_missing_divergent_copy_recovers_survivor_and_reappearance_conflict(
+def test_missing_distinct_stream_preserves_collected_usage(
     repository: Repository, tmp_path: Path
 ) -> None:
     roots = _roots(tmp_path)
@@ -127,30 +128,30 @@ def test_missing_divergent_copy_recovers_survivor_and_reappearance_conflict(
     _write_jsonl(missing, missing_records)
     sync_codex(repository, roots)
 
-    conflicted = repository.get_event(f"codex:{owner}:0")
-    assert conflicted is not None and conflicted.status == "conflicted"
+    conflicted = _event(repository, owner, 0)
+    assert conflicted is not None and conflicted.status == "canonical"
 
     missing.unlink()
     sync_codex(repository, roots)
 
-    survivor_event = repository.get_event(f"codex:{owner}:0")
+    survivor_event = _event(repository, owner, 0)
     assert survivor_event is not None and survivor_event.status == "canonical"
-    assert survivor_event.tokens.input == 10
-    assert survivor_event.tokens.output is None
-    assert repository.source_total("codex").tokens.input == 10
+    assert survivor_event.tokens.input == 20
+    assert survivor_event.tokens.output == 7
+    assert repository.source_total("codex").tokens.input == 30
 
     repeated = sync_codex(repository, roots)
     assert repeated.events_updated == 0
     _write_jsonl(missing, missing_records)
     sync_codex(repository, roots)
-    reappeared = repository.get_event(f"codex:{owner}:0")
-    assert reappeared is not None and reappeared.status == "conflicted"
+    reappeared = _event(repository, owner, 0)
+    assert reappeared is not None and reappeared.status == "canonical"
 
     missing.unlink()
     sync_codex(repository, roots)
-    recovered = repository.get_event(f"codex:{owner}:0")
+    recovered = _event(repository, owner, 0)
     assert recovered is not None and recovered.status == "canonical"
-    assert repository.source_total("codex").tokens.input == 10
+    assert repository.source_total("codex").tokens.input == 30
 
 
 def test_rebuild_owners_scopes_cleanup_keys_under_sqlite_variable_limit(
@@ -185,7 +186,7 @@ def test_rebuild_owners_scopes_cleanup_keys_under_sqlite_variable_limit(
     finally:
         connection.setlimit(variable_limit, original_limit)
 
-    removed = repository.get_event("codex:owner-a:25")
+    removed = _event(repository, "owner-a", 25)
     assert removed is not None and removed.status == "excluded"
     assert repository.source_total("codex").tokens.input == 51
 
@@ -245,10 +246,10 @@ def test_rebuild_owners_uses_observation_owners_for_wildcard_and_colon_ids(
     codex_import._rebuild_owners(repository, set(stale_owners))
 
     for owner in stale_owners:
-        event = repository.get_event(f"codex:{owner}:0")
+        event = _event(repository, owner, 0)
         assert event is not None and event.status == "excluded"
     for owner in ("wild_AX", "prefix:child"):
-        event = repository.get_event(f"codex:{owner}:0")
+        event = _event(repository, owner, 0)
         assert event is not None and event.status == "canonical"
 
     connection.execute(
@@ -260,7 +261,7 @@ def test_rebuild_owners_uses_observation_owners_for_wildcard_and_colon_ids(
     codex_import._rebuild_owners(repository, set(stale_owners))
 
     for owner in owners:
-        event = repository.get_event(f"codex:{owner}:0")
+        event = _event(repository, owner, 0)
         assert event is not None and event.status == "canonical"
 
 
@@ -285,19 +286,26 @@ def test_owner_cleanup_starts_from_exact_owner_observations(
     finally:
         connection.set_trace_callback(None)
 
-    owner_event = repository.get_event(f"codex:{owner}:0")
-    child_event = repository.get_event(f"codex:{child_owner}:0")
+    owner_event = _event(repository, owner, 0)
+    child_event = _event(repository, child_owner, 0)
     assert owner_event is not None and owner_event.status == "canonical"
     assert child_event is not None and child_event.status == "canonical"
     query = next(
         statement
         for statement in statements
-        if statement.startswith("SELECT DISTINCT e.id, e.event_key FROM observations o ")
+        if statement.startswith(
+            "SELECT DISTINCT e.id, e.event_key FROM observations o "
+        )
     )
     details = [str(row[3]) for row in connection.execute(f"EXPLAIN QUERY PLAN {query}")]
 
-    assert "SEARCH o USING COVERING INDEX idx_observations_codex_owner_link" in details[0]
-    assert "SEARCH l USING COVERING INDEX sqlite_autoindex_observation_links_1" in details[1]
+    assert (
+        "SEARCH o USING COVERING INDEX idx_observations_codex_owner_link" in details[0]
+    )
+    assert (
+        "SEARCH l USING COVERING INDEX sqlite_autoindex_observation_links_1"
+        in details[1]
+    )
     assert "SEARCH e USING INTEGER PRIMARY KEY" in details[2]
 
 
@@ -334,7 +342,7 @@ def test_rebuild_owners_excludes_stale_event_under_variable_limit_one(
     finally:
         connection.setlimit(variable_limit, original_limit)
 
-    event = repository.get_event(f"codex:{owner}:0")
+    event = _event(repository, owner, 0)
     assert event is not None and event.status == "excluded"
 
 
@@ -490,3 +498,89 @@ def test_unchanged_state_does_not_rebuild_canonical_history(
 
     assert repeated.lines_read == 0
     assert repeated.events_updated == 0
+
+
+def test_rebuild_history_repairs_legacy_collisions_and_restores_observation_dates(
+    repository: Repository, tmp_path: Path
+) -> None:
+    roots = _roots(tmp_path)
+    first = _token_count(10, 10)
+    second = _token_count(30, 20)
+    second["timestamp"] = "2026-08-29T00:00:01Z"
+    _write_jsonl(
+        roots.sessions / "legacy.jsonl",
+        [
+            _session_meta("legacy"),
+            first,
+            _session_meta("legacy"),
+            second,
+        ],
+    )
+    sync_codex(repository, roots)
+    before = repository.profile_reporting_rows()
+    connection = repository.connection
+    connection.execute(
+        "UPDATE observations SET source_sequence = 0 WHERE source = 'codex'"
+    )
+    repository.apply_projection(
+        Projection(
+            events=(
+                UsageEventDraft(
+                    source="codex",
+                    event_key="codex:legacy:0",
+                    granularity="counter_delta",
+                    status="conflicted",
+                    tokens=TokenUsage(),
+                    model="known-model",
+                ),
+            )
+        )
+    )
+    legacy_id = connection.execute(
+        "SELECT id FROM usage_events WHERE event_key = 'codex:legacy:0'"
+    ).fetchone()[0]
+    connection.execute(
+        "UPDATE observation_links SET usage_event_id = ? WHERE observation_id IN (SELECT id FROM observations WHERE event_type = 'token_count')",
+        (legacy_id,),
+    )
+    connection.execute(
+        "DELETE FROM usage_events WHERE event_key LIKE 'codex:legacy:usage:%'"
+    )
+    retained_observations = connection.execute(
+        "SELECT * FROM observations ORDER BY id"
+    ).fetchall()
+    codex_import.rebuild_codex_history(repository)
+    assert (
+        connection.execute("SELECT * FROM observations ORDER BY id").fetchall()
+        == retained_observations
+    )
+    assert repository.source_total("codex").tokens.input == 30
+    after = repository.profile_reporting_rows()
+    assert [row.usage.occurred_at_ns for row in after] == [
+        row.usage.occurred_at_ns for row in before
+    ]
+    assert all(row.usage.resolved_model == "known-model" for row in after)
+    assert repository.get_event("codex:legacy:0").status == "excluded"
+    assert codex_import.rebuild_codex_history(repository).events_updated == 0
+
+
+def test_normal_sync_upgrades_legacy_history_after_source_cleanup(
+    repository: Repository, tmp_path: Path
+) -> None:
+    roots = _roots(tmp_path)
+    path = roots.sessions / "removed.jsonl"
+    _write_jsonl(path, [_session_meta("upgrade"), _token_count(10, 10)])
+    sync_codex(repository, roots)
+    connection = repository.connection
+    connection.execute(
+        "UPDATE usage_events SET event_key = 'codex:upgrade:0', status = 'excluded' "
+        "WHERE source = 'codex'"
+    )
+    connection.execute("UPDATE observation_links SET method = 'owner_ordinal'")
+    path.unlink()
+    upgraded = sync_codex(repository, roots)
+    assert upgraded.lines_read == 0
+    assert repository.source_total("codex").tokens.input == 10
+    assert repository.get_event("codex:upgrade:0").status == "excluded"
+    assert codex_import._legacy_owners(repository) == set()
+    assert sync_codex(repository, roots).events_updated == 0

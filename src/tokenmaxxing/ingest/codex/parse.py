@@ -1,3 +1,5 @@
+import hashlib
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -15,7 +17,7 @@ from tokenmaxxing.models import (
     UsageEventDraft,
 )
 
-_PARSER_VERSION = "codex-disk-v1"
+_PARSER_VERSION = "codex-disk-v2"
 _TOKEN_FIELDS = (
     "input",
     "output",
@@ -78,13 +80,24 @@ def _usage_values(value: object) -> dict[str, int]:
     usage: dict[str, int] = {}
     for source_name, target_name in _SOURCE_TOKEN_FIELDS.items():
         token_value = source.get(source_name)
-        if isinstance(token_value, int) and not isinstance(token_value, bool) and token_value >= 0:
+        if (
+            isinstance(token_value, int)
+            and not isinstance(token_value, bool)
+            and token_value >= 0
+        ):
             usage[target_name] = token_value
     return usage
 
 
 def _usage(usage: Mapping[str, int]) -> TokenUsage:
     return TokenUsage(**{name: usage[name] for name in _TOKEN_FIELDS if name in usage})
+
+
+def _event_key(owner: str, observed_at_ns: int, usage: Mapping[str, object]) -> str:
+    identity = json.dumps(
+        [owner, observed_at_ns, usage], sort_keys=True, separators=(",", ":")
+    )
+    return f"codex:{owner}:usage:{hashlib.sha256(identity.encode()).hexdigest()}"
 
 
 def _physical_key(line: SourceLine) -> str:
@@ -119,8 +132,9 @@ def project_codex_line(line: SourceLine, state: CodexState) -> Projection:
             state.owner_session_id = None
             state.owner_ordinal = 0
             return _issue(line, "missing_session_id", type(session_id).__name__)
+        if state.owner_session_id != session_id:
+            state.owner_ordinal = 0
         state.owner_session_id = session_id
-        state.owner_ordinal = 0
         cli_version = payload.get("cli_version")
         provider = payload.get("model_provider")
         model = payload.get("model")
@@ -158,7 +172,11 @@ def project_codex_line(line: SourceLine, state: CodexState) -> Projection:
         )
         return Projection(observations=(observation,), sessions=(session,), runs=(run,))
 
-    if record_type != "event_msg" or payload is None or payload.get("type") != "token_count":
+    if (
+        record_type != "event_msg"
+        or payload is None
+        or payload.get("type") != "token_count"
+    ):
         return Projection()
 
     owner = state.owner_session_id
@@ -174,7 +192,7 @@ def project_codex_line(line: SourceLine, state: CodexState) -> Projection:
     state.owner_ordinal += 1
 
     observation_key = _physical_key(line)
-    event_key = f"codex:{owner}:{owner_ordinal}"
+    event_key = _event_key(owner, observed_at_ns, {"last": last, "total": total})
     observation = ObservationDraft(
         source="codex",
         channel="disk",
@@ -201,7 +219,7 @@ def project_codex_line(line: SourceLine, state: CodexState) -> Projection:
         channel="disk",
         observation_key=observation_key,
         event_key=event_key,
-        method="owner_ordinal",
+        method="usage_fingerprint",
         role="primary",
         confidence="exact",
     )

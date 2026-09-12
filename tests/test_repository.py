@@ -376,3 +376,24 @@ def test_profile_reporting_rows_group_root_and_child_executions_privately(
     ]
     assert repo.reporting_rows() == [row.usage for row in rows]
     assert all(not hasattr(row.usage, "agent_key") for row in rows)
+
+
+def test_merge_retains_absorbed_event_and_original_evidence(repo: Repository) -> None:
+    repo.apply_projection(linked_projection('disk:survivor', 'claude:survivor'))
+    repo.apply_projection(linked_projection('disk:absorbed', 'claude:absorbed'))
+    survivor = repo.connection.execute("SELECT id FROM usage_events WHERE event_key='claude:survivor'").fetchone()[0]
+    absorbed = repo.connection.execute("SELECT id FROM usage_events WHERE event_key='claude:absorbed'").fetchone()[0]
+    original_links = repo.connection.execute('SELECT * FROM observation_links ORDER BY observation_id, usage_event_id').fetchall()
+    repo.merge_events(survivor, absorbed)
+    assert repo.event_count('claude') == 2
+    assert repo.get_event('claude:absorbed').status == 'excluded'
+    assert repo.source_total('claude').tokens.input == 5
+    retained_links = repo.connection.execute('SELECT * FROM observation_links ORDER BY observation_id, usage_event_id').fetchall()
+    assert set(original_links) <= set(retained_links)
+    repo.merge_events(survivor, absorbed)
+    repo.merge_events(absorbed, survivor)
+    assert repo.connection.execute('SELECT * FROM observation_links ORDER BY observation_id, usage_event_id').fetchall() == retained_links
+    repo.apply_projection(linked_projection('disk:absorbed', 'claude:absorbed'))
+    repo.connection.execute("UPDATE usage_events SET status='canonical' WHERE id=?", (absorbed,))
+    assert repo.get_event('claude:absorbed').status == 'excluded'
+    assert repo.source_total('claude').tokens.input == 5

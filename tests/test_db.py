@@ -26,7 +26,7 @@ def test_fresh_database_has_complete_schema(tmp_path: Path) -> None:
         } <= names
         assert db.pragma("journal_mode") == "wal"
         assert db.pragma("foreign_keys") == 1
-        assert db.pragma("user_version") == 7
+        assert db.pragma("user_version") == 8
         observation_indexes = db.connection.execute(
             "PRAGMA index_list(observations)"
         ).fetchall()
@@ -45,7 +45,7 @@ def test_opening_an_already_migrated_database_is_idempotent(tmp_path: Path) -> N
 
     second = Database.open(path)
     try:
-        assert second.pragma("user_version") == 7
+        assert second.pragma("user_version") == 8
         assert "counted_usage_events" in second.object_names()
     finally:
         second.close()
@@ -91,7 +91,7 @@ def test_opening_a_pre_release_database_adds_reconciliation_indexes(tmp_path: Pa
 
     database = Database.open(path)
     try:
-        assert database.pragma("user_version") == 7
+        assert database.pragma("user_version") == 8
         observation_indexes = database.connection.execute(
             "PRAGMA index_list(observations)"
         ).fetchall()
@@ -163,3 +163,20 @@ def test_failed_migration_does_not_advance_database_version(
         ).fetchone() is None
     finally:
         connection.close()
+
+
+def test_nested_transactions_keep_recovery_atomic(database: Database) -> None:
+    with pytest.raises(RuntimeError, match='outer'):
+        with database.transaction() as connection:
+            connection.execute("INSERT INTO sessions(source,source_session_id) VALUES('pi','outer')")
+            with database.transaction() as inner:
+                inner.execute("INSERT INTO sessions(source,source_session_id) VALUES('pi','inner')")
+            raise RuntimeError('outer')
+    assert database.connection.execute('SELECT COUNT(*) FROM sessions').fetchone() == (0,)
+    with database.transaction() as connection:
+        connection.execute("INSERT INTO sessions(source,source_session_id) VALUES('pi','kept')")
+        with pytest.raises(RuntimeError, match='inner'):
+            with database.transaction() as inner:
+                inner.execute("INSERT INTO sessions(source,source_session_id) VALUES('pi','discarded')")
+                raise RuntimeError('inner')
+    assert database.connection.execute('SELECT source_session_id FROM sessions').fetchall() == [('kept',)]

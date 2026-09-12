@@ -17,20 +17,22 @@ Every importer follows the same six stages:
 
 JSONL importers store byte offsets and process only newline-terminated records.
 Truncation, replacement, inode changes, and header changes create a new artifact
-generation. OpenCode reads a stable V1 SQLite snapshot in query-only mode,
-including committed WAL data.
+generation. Reconciliation includes retained observations from older generations
+and missing files. Artifact availability controls scanning, not historical
+retention. OpenCode reads a stable V1 SQLite snapshot in query-only mode,
+including committed WAL data, and retains imported events after source deletion.
 
 ## Source identities
 
-Identity is source-scoped. Timestamps are metadata, never identity.
+Identity is source-scoped. A timestamp alone never identifies an event.
 
 | Source | Counted identity | Duplicate handling |
 | --- | --- | --- |
-| Codex | session owner and counter ordinal | Equal copied counters collapse; divergent copies conflict |
+| Codex | owner and fingerprint of timestamp plus full counter usage, with repeated-call occurrence | Physical counter streams are reconciled before copied observations collapse |
 | Claude | global message identity and iteration index | Progressive and copied snapshots reduce component-wise |
 | Pi direct | lineage root, entry identity, and usage slot | Copied observations reduce to one event |
 | Pi subagent | batch-qualified or lineage-qualified run identity | Progressive snapshots reduce to one run aggregate |
-| OpenCode | completed part identity, or assistant message fallback | A message fallback exists only without a completed part |
+| OpenCode | completed part identity, or assistant message fallback | Retained message and part observations select one coherent representation |
 
 Child Codex and OpenCode activity remains one model call per source identity.
 Root session attribution groups the activity without creating another usage
@@ -46,11 +48,15 @@ Usage events have four counting states:
 
 - `canonical`: reconciled and counted.
 - `provisional`: safely countable pending reconciliation recovery.
-- `excluded`: known non-usage, zero delta, stale generation, or superseded event.
+- `excluded`: known non-usage, zero delta, or a superseded accounting representation.
 - `conflicted`: contradictory observations with no safe winner.
 
 Reports include canonical and provisional events. Excluded and conflicted rows
 remain available for deterministic recovery but do not affect totals.
+Merges retain both event rows and their original observation links. A
+`merged_into_id` records supersession, and a database trigger keeps absorbed
+events excluded if later reconciliation tries to reactivate them. Import and
+repair paths do not delete ledger rows.
 
 ## Harness semantics
 
@@ -58,9 +64,13 @@ remain available for deterministic recovery but do not affect totals.
 
 Codex writes cumulative and last-call token counters. The importer uses
 cumulative deltas while counters increase and uses the last-call value after a
-reset. Active and archived copies share semantic identity. A divergent copied
-counter is quarantined and also resets the delta baseline so later calls cannot
-inherit an ambiguous cumulative value.
+reset. Deltas are computed in physical order within each artifact; concurrent
+streams sharing an owner never share a counter baseline. Active, archived, and
+retained copies share semantic identity. Original physical context wins when
+later compacted copies omit intervening counters; disagreements are recorded as
+issues. Repeated headers do not restart event identity. Rebuilding older ledgers
+replaces colliding ordinal identities with fingerprint identities and excludes
+the old aliases without counting both.
 
 Codex state and thread-history databases enrich session, run, and turn
 metadata. They never create token usage.
@@ -71,7 +81,9 @@ Claude may write progressive snapshots for one message. The importer takes the
 maximum observed value of each component. When iteration data exists, normal
 iterations replace the outer aggregate and any positive unexplained residual is
 counted once. Advisor iterations are separate calls. A negative residual is an
-internally contradictory decomposition and remains conflicted.
+internally contradictory decomposition. If an earlier coherent decomposition
+was collected, it remains counted alongside independently observed advisor
+calls; the contradiction is still recorded as an issue.
 
 ### Pi
 
@@ -86,7 +98,10 @@ Pi source token and cost values are authoritative for local reporting.
 ### OpenCode
 
 Completed `step-finish` parts are model calls. An assistant message supplies a
-fallback only when no completed part exists. Session aggregate columns are not
+fallback until the collected parts cover its recorded usage and cost. A later
+revision replaces a snapshot only when its recorded usage components do not
+decrease. Both representations remain stored, but only one is counted. Known
+dates and metadata survive source pruning. Session aggregate columns are not
 counted again. Child-session calls attach to the root session for grouping and
 to one child run for execution accounting. Normal sync repairs legacy child
 events that have the root session but no child run without changing their event

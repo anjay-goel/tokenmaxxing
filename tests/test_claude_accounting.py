@@ -262,3 +262,43 @@ def test_malformed_usage_records_issue_and_does_not_block_later_lines(
     assert repository.connection.execute(
         "SELECT category, observed_type FROM issues WHERE source = 'claude'"
     ).fetchone() == ("invalid_usage", "str")
+
+
+@pytest.mark.parametrize("with_iteration", [False, True])
+def test_conflicting_revision_retains_previous_coherent_usage(repository: Repository, tmp_path: Path, with_iteration: bool) -> None:
+    path = tmp_path / 'revision.jsonl'
+    original = _assistant(
+        'retained', 'entry', usage=_usage(input_tokens=10, output_tokens=10),
+        iterations=[{'type': 'message', **_usage(input_tokens=5, output_tokens=5)}] if with_iteration else None,
+    )
+    _write_jsonl(path, [original])
+    sync_claude(repository, path)
+    before = repository.source_total('claude').tokens
+    before_rows = repository.profile_reporting_rows()
+    _write_jsonl(path, [_assistant(
+        'retained', 'entry', usage=_usage(input_tokens=10, output_tokens=10),
+        iterations=[{'type': 'message', **_usage(input_tokens=20, output_tokens=20)}],
+    )])
+    sync_claude(repository, path)
+    assert repository.source_total('claude').tokens == before
+    assert repository.profile_reporting_rows() == before_rows
+    path.unlink()
+    sync_claude(repository, path)
+    assert repository.source_total('claude').tokens == before
+
+
+def test_conflicting_revision_keeps_independent_advisor_usage(repository: Repository, tmp_path: Path) -> None:
+    path = tmp_path / 'advisor-revision.jsonl'
+    _write_jsonl(path, [_assistant('retained-advisor', 'entry', usage=_usage(input_tokens=10, output_tokens=10))])
+    sync_claude(repository, path)
+    _write_jsonl(path, [_assistant(
+        'retained-advisor', 'entry', usage=_usage(input_tokens=10, output_tokens=10),
+        iterations=[
+            {'type': 'message', **_usage(input_tokens=20, output_tokens=20)},
+            {'type': 'advisor_message', 'model': 'advisor', **_usage(input_tokens=30, output_tokens=3)},
+        ],
+    )])
+    sync_claude(repository, path)
+    assert repository.source_total('claude').tokens.input == 40
+    assert repository.source_total('claude').tokens.output == 13
+    assert repository.get_event('claude:retained-advisor:iteration:1').status == 'canonical'

@@ -128,7 +128,7 @@ def test_missing_parent_reuses_persisted_clone_lineage_without_colliding_session
     ).fetchall() == [("lineage-root",), ("lineage-root",)]
 
 
-def test_replacement_excludes_removed_usage_and_rebuilds_current_generation(
+def test_replacement_preserves_removed_usage(
     repository: Repository, tmp_path: Path
 ) -> None:
     path = tmp_path / "replacement.jsonl"
@@ -142,12 +142,12 @@ def test_replacement_excludes_removed_usage_and_rebuilds_current_generation(
 
     old = repository.get_event("pi:replace:old:assistant")
     new = repository.get_event("pi:replace:new:assistant")
-    assert old is not None and old.status == "excluded"
+    assert old is not None and old.status == "canonical"
     assert new is not None and new.status == "canonical"
-    assert repository.source_total("pi").tokens.input == 4
+    assert repository.source_total("pi").tokens.input == 13
 
 
-def test_same_file_truncation_excludes_removed_usage(
+def test_same_file_truncation_preserves_removed_usage(
     repository: Repository, tmp_path: Path
 ) -> None:
     path = tmp_path / "truncation.jsonl"
@@ -166,9 +166,9 @@ def test_same_file_truncation_excludes_removed_usage(
 
     first = repository.get_event("pi:truncate:first:assistant")
     second = repository.get_event("pi:truncate:second:assistant")
-    assert first is not None and first.status == "excluded"
-    assert second is not None and second.status == "excluded"
-    assert repository.source_total("pi").tokens.input == 3
+    assert first is not None and first.status == "canonical"
+    assert second is not None and second.status == "canonical"
+    assert repository.source_total("pi").tokens.input == 20
 
 
 def test_sync_recovers_after_interrupted_rebuild(
@@ -252,16 +252,16 @@ def test_replacement_scan_failure_repairs_stale_run_from_eof(
     assert repository.connection.execute(
         "SELECT status, completed_at_ns, duration_ns FROM runs "
         "WHERE source_run_id = 'batch-replaced:A001'"
-    ).fetchone() == ("running", None, None)
+    ).fetchone() == ("completed", 1787875201000000000, 1000000000)
     event = repository.get_event("pi:subagent:batch-replaced:A001")
     assert event is not None
     assert event.status == "canonical"
-    assert event.success is None
-    assert event.completed_at_ns is None
+    assert event.success is True
+    assert event.completed_at_ns == 1787875201000000000
     assert repeated.events_updated == 0
 
 
-def test_missing_artifact_is_excluded_and_rediscovery_restores_it(
+def test_missing_artifact_is_retained_and_rediscovery_deduplicates_it(
     repository: Repository, tmp_path: Path
 ) -> None:
     root = tmp_path / "sessions"
@@ -274,7 +274,7 @@ def test_missing_artifact_is_excluded_and_rediscovery_restores_it(
     sync_pi(repository, root)
 
     event = repository.get_event("pi:missing:missing-call:assistant")
-    assert event is not None and event.status == "excluded"
+    assert event is not None and event.status == "canonical"
     parked.replace(path)
 
     restored = sync_pi(repository, root)

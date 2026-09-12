@@ -124,7 +124,7 @@ def test_late_nonterminal_subagent_snapshot_cannot_downgrade_terminal_metadata(
     ).fetchone() == ("completed",)
 
 
-def test_replacement_nonterminal_subagent_snapshots_clear_removed_terminal_metadata(
+def test_replacement_nonterminal_subagent_snapshots_preserve_collected_terminal_metadata(
     repository: Repository, tmp_path: Path
 ) -> None:
     path = tmp_path / "replaced-subagent.jsonl"
@@ -176,17 +176,17 @@ def test_replacement_nonterminal_subagent_snapshots_clear_removed_terminal_metad
 
     event = repository.get_event("pi:subagent:batch-replaced:A001")
     assert event is not None
-    assert event.tokens.input == 12
-    assert event.tokens.output == 3
-    assert event.success is None
-    assert event.completed_at_ns is None
+    assert event.tokens.input == 40
+    assert event.tokens.output == 10
+    assert event.success is True
+    assert event.completed_at_ns == 1787875201000000000
     assert event.error_category is None
-    assert event.provider == "new-provider"
-    assert event.model == "new-model"
+    assert event.provider == "old-provider"
+    assert event.model == "old-model"
     assert repository.connection.execute(
         "SELECT status, model, provider, completed_at_ns, duration_ns FROM runs "
         "WHERE source_run_id = 'batch-replaced:A001'"
-    ).fetchone() == ("running", "new-model", "new-provider", None, None)
+    ).fetchone() == ("completed", "old-model", "old-provider", 1787875201000000000, 1000000000)
 
 
 def test_subagent_replacement_preserves_cross_channel_fields_disk_does_not_own(
@@ -351,7 +351,7 @@ def test_clone_only_subagent_usage_uses_the_available_physical_session(
     ).fetchone() == ("clone-only",)
 
 
-def test_global_subagent_status_reduces_all_live_artifact_generations(
+def test_global_subagent_status_reduces_all_retained_artifact_generations(
     repository: Repository, tmp_path: Path
 ) -> None:
     root = tmp_path / "sessions"
@@ -416,16 +416,16 @@ def test_global_subagent_status_reduces_all_live_artifact_generations(
     assert event is not None
     assert event.tokens.input == 40
     assert event.success is True
-    assert event.completed_at_ns == 1787875201000000000
+    assert event.completed_at_ns == 1787875202000000000
     assert (event.provider, event.model, event.effort) == (
-        "provider-a",
-        "model-a",
-        "high",
+        "provider-b",
+        "model-b",
+        "low",
     )
     assert repository.connection.execute(
         "SELECT status, completed_at_ns FROM runs "
         "WHERE source_run_id = 'batch-replaced:A001'"
-    ).fetchone() == ("completed", 1787875201000000000)
+    ).fetchone() == ("completed", 1787875202000000000)
     replacement_a = tmp_path / "replacement-a.jsonl"
     _write_jsonl(
         replacement_a,
@@ -448,13 +448,13 @@ def test_global_subagent_status_reduces_all_live_artifact_generations(
 
     event = repository.get_event("pi:subagent:batch-replaced:A001")
     assert event is not None
-    assert event.tokens.input == 15
-    assert event.success is None
-    assert event.completed_at_ns is None
+    assert event.tokens.input == 40
+    assert event.success is True
+    assert event.completed_at_ns == 1787875202000000000
     assert repository.connection.execute(
         "SELECT status, completed_at_ns, duration_ns FROM runs "
         "WHERE source_run_id = 'batch-replaced:A001'"
-    ).fetchall() == [("running", None, None)]
+    ).fetchall() == [("completed", 1787875202000000000, 2000000000)]
 
 
 def test_subagent_reducer_preserves_epoch_zero_timings(

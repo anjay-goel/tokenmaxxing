@@ -222,9 +222,6 @@ def _live_subagent_records(
         "WHERE o.source = 'pi' AND o.channel = 'disk' "
         "AND o.event_type = 'subagent_snapshot' "
         "AND o.source_turn_id IS NOT NULL AND o.source_run_id IS NOT NULL "
-        "AND COALESCE(a.is_missing, 0) = 0 "
-        "AND a.generation = (SELECT MAX(current.generation) FROM artifacts current "
-        "WHERE current.source = a.source AND current.path_hash = a.path_hash) "
         "ORDER BY o.source_turn_id, o.observed_at_ns, a.id, o.ordinal"
     ).fetchall()
     grouped: dict[str, list[tuple[_SubagentRecord, int, int]]] = {}
@@ -401,7 +398,7 @@ def _repair_subagent_runs(
                 ),
             )
             event = _subagent_event(record)
-            current = repository.get_event(record.event_key)
+            current = repository.get_event(record.event_key, source="pi")
             event_is_current = (
                 current is not None
                 and current.status == "canonical"
