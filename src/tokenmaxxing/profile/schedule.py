@@ -137,6 +137,16 @@ def _launch_path(paths: ProfilePaths, environ: Mapping[str, str]) -> Path:
     )
 
 
+def _launch_log_path(paths: ProfilePaths, environ: Mapping[str, str]) -> Path:
+    return (
+        _home(environ)
+        / "Library"
+        / "Logs"
+        / "tokenmaxxing"
+        / f"{schedule_identifier(paths.root)}.log"
+    )
+
+
 def _launch_domain() -> str:
     getuid = getattr(os, "getuid", None)
     uid = getuid() if getuid is not None else 0
@@ -148,6 +158,7 @@ def _launch_document(
     config: ProfileConfig,
     command: tuple[str, ...],
     scheduled_path: str,
+    log_path: Path,
 ) -> bytes:
     document = {
         "Label": schedule_identifier(paths.root),
@@ -159,6 +170,8 @@ def _launch_document(
             "Hour": config.schedule.time.hour,
             "Minute": config.schedule.time.minute,
         },
+        "StandardOutPath": str(log_path),
+        "StandardErrorPath": str(log_path),
     }
     return plistlib.dumps(document, fmt=plistlib.FMT_XML, sort_keys=True)
 
@@ -456,7 +469,8 @@ def _enable_launchd(
 ) -> ScheduleStatus:
     job = _launch_path(paths, environ)
     current = _read_launch(job, paths.root)
-    content = _launch_document(paths, config, command, scheduled_path)
+    log_path = _launch_log_path(paths, environ)
+    content = _launch_document(paths, config, command, scheduled_path, log_path)
     desired = plistlib.loads(content)
     identifier = schedule_identifier(paths.root)
     loaded = _launch_loaded(identifier, runner)
@@ -471,6 +485,7 @@ def _enable_launchd(
         )
     if current != desired:
         _write_atomic(job, content)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
     _require_success(runner, ("launchctl", "bootstrap", _launch_domain(), str(job)))
     return ScheduleStatus(True, "launchd", job, command)
 

@@ -191,8 +191,13 @@ def test_launch_agent_uses_owned_absolute_noninteractive_command(
         "--non-interactive",
     )
     assert document["StartCalendarInterval"] == {"Hour": 9, "Minute": 0}
-    assert "StandardOutPath" not in document
-    assert "StandardErrorPath" not in document
+    log_path = (
+        tmp_path.resolve() / "Library" / "Logs" / "tokenmaxxing"
+        / f"{schedule_identifier(paths.root)}.log"
+    )
+    assert document["StandardOutPath"] == str(log_path)
+    assert document["StandardErrorPath"] == str(log_path)
+    assert log_path.parent.is_dir()
 
 
 def test_launch_agent_enable_and_disable_are_idempotent(
