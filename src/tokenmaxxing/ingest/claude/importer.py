@@ -33,6 +33,27 @@ def _discover_jsonl(root: Path) -> list[Path]:
     return sorted(root.rglob("*.jsonl"))
 
 
+def _mark_missing(repository: Repository, root: Path, paths: list[Path]) -> None:
+    if not root.is_dir():
+        return
+    connection = repository.connection
+    present_hashes = {_path_hash(connection, path) for path in paths}
+    rows = connection.execute(
+        "SELECT a.id, a.path_hash FROM artifacts a "
+        "WHERE a.source = 'claude' AND a.generation = ("
+        "SELECT MAX(current.generation) FROM artifacts current "
+        "WHERE current.source = a.source AND current.path_hash = a.path_hash) "
+        "AND COALESCE(a.is_missing, 0) = 0"
+    ).fetchall()
+    missing_ids = [int(row[0]) for row in rows if str(row[1]) not in present_hashes]
+    if missing_ids:
+        with repository.transaction() as transaction:
+            transaction.executemany(
+                "UPDATE artifacts SET is_missing = 1 WHERE id = ?",
+                ((artifact_id,) for artifact_id in missing_ids),
+            )
+
+
 def _superseded_messages(repository: Repository, path: Path) -> set[str]:
     connection = repository.connection
     artifact = _latest_artifact(connection, "claude", _path_hash(connection, path))
@@ -88,7 +109,9 @@ def _rediscovered_messages(repository: Repository, path: Path) -> set[str]:
 def sync_claude(repository: Repository, root: Path) -> SyncStats:
     stats = SyncStats()
     changed_messages: set[str] = set()
-    for path in _discover_jsonl(root):
+    paths = _discover_jsonl(root)
+    _mark_missing(repository, root, paths)
+    for path in paths:
         changed_messages.update(_rediscovered_messages(repository, path))
         changed_messages.update(_superseded_messages(repository, path))
 

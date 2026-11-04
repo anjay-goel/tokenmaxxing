@@ -336,14 +336,14 @@ def test_missing_artifact_is_retained_and_rediscovery_deduplicates_it(
     )
     sync_claude(repository, root)
     path.unlink()
-    repository.connection.execute(
-        "UPDATE artifacts SET is_missing = 1 WHERE source = 'claude'"
-    )
 
     sync_claude(repository, root)
 
     missing = repository.get_event("claude:msg_missing")
     assert missing is not None and missing.status == "canonical"
+    assert repository.connection.execute(
+        "SELECT is_missing FROM artifacts WHERE source = 'claude'"
+    ).fetchall() == [(1,)]
     _write_jsonl(
         path,
         [_assistant("msg_missing", "entry-missing", usage=_usage(output_tokens=9))],
